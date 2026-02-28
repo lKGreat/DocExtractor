@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
+using DocExtractor.Core.Interfaces;
 using DocExtractor.Core.Models;
+using DocExtractor.Core.Normalization;
 using Newtonsoft.Json;
 
 namespace DocExtractor.Data.Repositories
@@ -12,11 +14,27 @@ namespace DocExtractor.Data.Repositories
     public class GroupKnowledgeRepository : IDisposable
     {
         private readonly SQLiteConnection _conn;
+        private readonly IValueNormalizer _valueNormalizer;
 
-        public GroupKnowledgeRepository(string dbPath)
+        private static readonly FieldDefinition ItemNameField = new FieldDefinition
+        {
+            FieldName = "ItemName",
+            DisplayName = "细则项",
+            DataType = FieldDataType.Text
+        };
+
+        private static readonly FieldDefinition RequiredValueField = new FieldDefinition
+        {
+            FieldName = "RequiredValue",
+            DisplayName = "要求值",
+            DataType = FieldDataType.Text
+        };
+
+        public GroupKnowledgeRepository(string dbPath, IValueNormalizer? valueNormalizer = null)
         {
             _conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
             _conn.Open();
+            _valueNormalizer = valueNormalizer ?? new DefaultValueNormalizer();
             EnsureTable();
         }
 
@@ -122,11 +140,15 @@ namespace DocExtractor.Data.Repositories
 
                 foreach (var r in kv.Value)
                 {
-                    string itemName = r.GetField("ItemName");
+                    string itemName = _valueNormalizer.Normalize(r.GetField("ItemName"), ItemNameField);
                     if (string.IsNullOrWhiteSpace(itemName)) continue;
 
                     pItem.Value = itemName.Trim();
-                    pReq.Value  = (object)r.GetField("RequiredValue") ?? DBNull.Value;
+                    string requiredValue = r.GetField("RequiredValue");
+                    if (string.IsNullOrWhiteSpace(requiredValue))
+                        pReq.Value = DBNull.Value;
+                    else
+                        pReq.Value = _valueNormalizer.Normalize(requiredValue, RequiredValueField);
 
                     var otherFields = new Dictionary<string, string>();
                     foreach (var field in r.Fields)
@@ -175,12 +197,16 @@ namespace DocExtractor.Data.Repositories
 
             foreach (var r in records)
             {
-                string itemName = r.GetField("ItemName");
+                string itemName = _valueNormalizer.Normalize(r.GetField("ItemName"), ItemNameField);
                 if (string.IsNullOrWhiteSpace(itemName)) continue;
 
                 pGn.Value   = normalized;
                 pItem.Value = itemName.Trim();
-                pReq.Value  = (object)r.GetField("RequiredValue") ?? DBNull.Value;
+                string requiredValue = r.GetField("RequiredValue");
+                if (string.IsNullOrWhiteSpace(requiredValue))
+                    pReq.Value = DBNull.Value;
+                else
+                    pReq.Value = _valueNormalizer.Normalize(requiredValue, RequiredValueField);
 
                 var otherFields = new Dictionary<string, string>();
                 foreach (var kv in r.Fields)

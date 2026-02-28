@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using OfficeOpenXml;
+using DocExtractor.Core.Exceptions;
 using DocExtractor.Core.Interfaces;
 using DocExtractor.Core.Models;
 using DocExtractor.Parsing.Common;
@@ -32,22 +33,37 @@ namespace DocExtractor.Parsing.Excel
 
         public IReadOnlyList<RawTable> Parse(string filePath)
         {
-            var result = new List<RawTable>();
-
-            using var package = new ExcelPackage(new FileInfo(filePath));
-            int tableIndex = 0;
-
-            foreach (var sheet in package.Workbook.Worksheets)
+            try
             {
-                if (_targetSheets != null && !_targetSheets.Contains(sheet.Name))
-                    continue;
+                var result = new List<RawTable>();
 
-                var rawTable = ParseSheet(sheet, filePath, tableIndex++);
-                if (!rawTable.IsEmpty)
-                    result.Add(rawTable);
+                using var package = new ExcelPackage(new FileInfo(filePath));
+                int tableIndex = 0;
+
+                foreach (var sheet in package.Workbook.Worksheets)
+                {
+                    if (_targetSheets != null && !_targetSheets.Contains(sheet.Name))
+                        continue;
+
+                    var rawTable = ParseSheet(sheet, filePath, tableIndex++);
+                    if (!rawTable.IsEmpty)
+                        result.Add(rawTable);
+                }
+
+                return result;
             }
-
-            return result;
+            catch (ParseException)
+            {
+                throw;
+            }
+            catch (System.Exception ex)
+            {
+                throw new ParseException(
+                    $"Excel 解析失败：{ex.Message}",
+                    filePath,
+                    nameof(ExcelDocumentParser),
+                    ex);
+            }
         }
 
         private RawTable ParseSheet(ExcelWorksheet sheet, string sourceFile, int tableIndex)

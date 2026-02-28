@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using DocExtractor.Core.Exceptions;
 using Microsoft.ML;
 
 namespace DocExtractor.ML.SectionClassifier
@@ -26,13 +27,29 @@ namespace DocExtractor.ML.SectionClassifier
         public void Load(string modelPath)
         {
             if (!File.Exists(modelPath))
-                throw new FileNotFoundException($"章节分类模型文件不存在: {modelPath}");
+                throw new ModelException(
+                    $"章节分类模型文件不存在: {modelPath}",
+                    "section_classifier",
+                    modelPath);
 
             lock (_lock)
             {
-                _engine?.Dispose();
-                _model = _mlContext.Model.Load(modelPath, out _);
-                _engine = _mlContext.Model.CreatePredictionEngine<SectionInput, SectionPrediction>(_model);
+                try
+                {
+                    _engine?.Dispose();
+                    _model = _mlContext.Model.Load(modelPath, out _);
+                    _engine = _mlContext.Model.CreatePredictionEngine<SectionInput, SectionPrediction>(_model);
+                }
+                catch (Exception ex)
+                {
+                    _model = null;
+                    _engine = null;
+                    throw new ModelException(
+                        $"章节分类模型加载失败：{ex.Message}",
+                        "section_classifier",
+                        modelPath,
+                        ex);
+                }
             }
         }
 

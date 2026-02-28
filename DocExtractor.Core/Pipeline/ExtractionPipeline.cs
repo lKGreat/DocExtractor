@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using DocExtractor.Core.Exceptions;
 using DocExtractor.Core.Interfaces;
 using DocExtractor.Core.Models;
+using DocExtractor.Core.Normalization;
 using DocExtractor.Core.Splitting;
 
 namespace DocExtractor.Core.Pipeline
@@ -16,16 +18,19 @@ namespace DocExtractor.Core.Pipeline
         private readonly IReadOnlyList<IDocumentParser> _parsers;
         private readonly IColumnNormalizer _columnNormalizer;
         private readonly IEntityExtractor? _entityExtractor;
+        private readonly IValueNormalizer _valueNormalizer;
         private readonly IReadOnlyList<IRecordSplitter> _splitters;
 
         public ExtractionPipeline(
             IReadOnlyList<IDocumentParser> parsers,
             IColumnNormalizer columnNormalizer,
-            IEntityExtractor? entityExtractor = null)
+            IEntityExtractor? entityExtractor = null,
+            IValueNormalizer? valueNormalizer = null)
         {
             _parsers = parsers;
             _columnNormalizer = columnNormalizer;
             _entityExtractor = entityExtractor;
+            _valueNormalizer = valueNormalizer ?? new DefaultValueNormalizer();
             _splitters = new IRecordSplitter[]
             {
                 new MergedCellExpander(),
@@ -50,6 +55,8 @@ namespace DocExtractor.Core.Pipeline
                 if (parser == null)
                 {
                     result.ErrorMessage = $"不支持的文件格式: {ext}";
+                    result.ErrorCode = "UNSUPPORTED_FILE_TYPE";
+                    result.ErrorStage = "Parse";
                     return result;
                 }
 
@@ -58,7 +65,24 @@ namespace DocExtractor.Core.Pipeline
                     5);
 
                 // 2. 解析文档 → RawTable 集合
-                var rawTables = parser.Parse(filePath);
+                IReadOnlyList<RawTable> rawTables;
+                try
+                {
+                    rawTables = parser.Parse(filePath);
+                }
+                catch (ParseException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    throw new ParseException(
+                        $"文件「{Path.GetFileName(filePath)}」解析失败：{ex.Message}",
+                        filePath,
+                        parser.GetType().Name,
+                        ex);
+                }
+
                 result.TablesProcessed = rawTables.Count;
 
                 Report(progress, "解析", $"解析完成，共 {rawTables.Count} 个表格", 20);
@@ -101,11 +125,25 @@ namespace DocExtractor.Core.Pipeline
                     int pct = 30 + (int)(40.0 * ti / selectedTables.Count);
 
                     // 4. 列名规范化
-                    var columnMap = BuildColumnMap(table, config);
+                    Dictionary<int, string> columnMap;
+                    try
+                    {
+                        columnMap = BuildColumnMap(table, config);
+                    }
+                    catch (ColumnMappingException cmEx)
+                    {
+                        result.Warnings.Add(
+                            $"[列映射警告] 文件「{Path.GetFileName(filePath)}」表格{table.TableIndex + 1}" +
+                            $"{(string.IsNullOrWhiteSpace(table.Title) ? string.Empty : $"（{table.Title}）")}：{cmEx.Message}");
+                        continue;
+                    }
 
                     if (columnMap.Count == 0)
                     {
                         skippedNoMatch++;
+                        result.Warnings.Add(
+                            $"[列映射警告] 文件「{Path.GetFileName(filePath)}」表格{table.TableIndex + 1}" +
+                            $"{(string.IsNullOrWhiteSpace(table.Title) ? string.Empty : $"（{table.Title}）")}：未匹配到任何字段");
                         continue; // 此表格无任何列匹配，跳过
                     }
 
@@ -125,7 +163,16 @@ namespace DocExtractor.Core.Pipeline
                 Report(progress, "拆分", "正在应用拆分规则...", 75);
 
                 // 6. 应用拆分规则（按 Priority 排序）
-                var finalRecords = ApplySplitRules(allRecords, config);
+                List<ExtractedRecord> finalRecords;
+                try
+                {
+                    finalRecords = ApplySplitRules(allRecords, config);
+                }
+                catch (SplitException sx)
+                {
+                    result.Warnings.Add($"[拆分警告] {sx.Message}，已回退为未拆分结果");
+                    finalRecords = allRecords;
+                }
 
                 // 7. 如果有分组规则，按 __GroupKey__ 分组（用于后续分 Sheet 导出）
                 var groupRule = config.SplitRules
@@ -144,10 +191,19 @@ namespace DocExtractor.Core.Pipeline
                 result.RecordsComplete = finalRecords.Count(r => r.IsComplete);
                 result.Success = true;
             }
+            catch (DocExtractorException dex)
+            {
+                result.Success = false;
+                result.ErrorMessage = dex.Message;
+                result.ErrorCode = dex.ErrorCode;
+                result.ErrorStage = dex.Stage;
+            }
             catch (Exception ex)
             {
                 result.Success = false;
                 result.ErrorMessage = ex.Message;
+                result.ErrorCode = "UNEXPECTED_ERROR";
+                result.ErrorStage = "Unknown";
             }
 
             return result;
@@ -192,10 +248,34 @@ namespace DocExtractor.Core.Pipeline
             var map = new Dictionary<int, string>();
             if (table.RowCount == 0) return map;
 
+            if (config.HeaderRowCount <= 0)
+            {
+                throw new ColumnMappingException(
+                    $"表头行数配置无效：{config.HeaderRowCount}",
+                    table.TableIndex,
+                    table.Title);
+            }
+
+            if (table.RowCount < config.HeaderRowCount)
+            {
+                throw new ColumnMappingException(
+                    $"表格总行数({table.RowCount})小于配置的表头行数({config.HeaderRowCount})",
+                    table.TableIndex,
+                    table.Title);
+            }
+
             // 读取表头行（第0行）
             var headers = new List<string>();
             for (int c = 0; c < table.ColCount; c++)
                 headers.Add(table.GetValue(0, c));
+
+            if (headers.All(string.IsNullOrWhiteSpace))
+            {
+                throw new ColumnMappingException(
+                    "表头行为空，无法进行列映射",
+                    table.TableIndex,
+                    table.Title);
+            }
 
             var mappings = _columnNormalizer.NormalizeBatch(headers, config.Fields);
 
@@ -218,6 +298,7 @@ namespace DocExtractor.Core.Pipeline
             Dictionary<int, string> columnMap)
         {
             var records = new List<ExtractedRecord>();
+            var fieldDict = config.Fields.ToDictionary(f => f.FieldName, f => f);
             int dataStart = config.HeaderRowCount; // 跳过表头
 
             for (int r = dataStart; r < table.RowCount; r++)
@@ -234,7 +315,10 @@ namespace DocExtractor.Core.Pipeline
 
                 // 注入章节标题（组名），优先于列映射填充
                 if (!string.IsNullOrWhiteSpace(table.SectionHeading))
+                {
                     record.Fields["GroupName"] = table.SectionHeading!;
+                    record.RawValues["GroupName"] = table.SectionHeading!;
+                }
 
                 // 按列映射填充字段
                 for (int c = 0; c < table.ColCount; c++)
@@ -244,7 +328,26 @@ namespace DocExtractor.Core.Pipeline
 
                     if (columnMap.TryGetValue(c, out var fieldName))
                     {
-                        record.Fields[fieldName] = cellValue;
+                        string normalizedValue = cellValue;
+                        if (config.EnableValueNormalization &&
+                            fieldDict.TryGetValue(fieldName, out var fieldDef))
+                        {
+                            try
+                            {
+                                normalizedValue = _valueNormalizer.Normalize(
+                                    cellValue,
+                                    fieldDef,
+                                    config.NormalizationOptions);
+                            }
+                            catch
+                            {
+                                normalizedValue = cellValue;
+                                record.Warnings.Add(
+                                    $"值归一化失败: 字段[{fieldName}] 行[{r + 1}]，已回退原始值");
+                            }
+                        }
+
+                        record.Fields[fieldName] = normalizedValue;
                         record.RawValues[fieldName] = cellValue;
                     }
                 }
@@ -285,7 +388,20 @@ namespace DocExtractor.Core.Pipeline
 
                 var next = new List<ExtractedRecord>();
                 foreach (var record in current)
-                    next.AddRange(splitter.Split(record, rule));
+                {
+                    try
+                    {
+                        next.AddRange(splitter.Split(record, rule));
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new SplitException(
+                            $"拆分规则「{rule.RuleName}」执行失败：{ex.Message}",
+                            rule.RuleName,
+                            rule.TriggerColumn,
+                            ex);
+                    }
+                }
                 current = next;
             }
 

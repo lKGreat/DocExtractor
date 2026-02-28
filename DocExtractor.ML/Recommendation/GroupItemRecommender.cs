@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using DocExtractor.Core.Interfaces;
+using DocExtractor.Core.Models;
+using DocExtractor.Core.Normalization;
 
 namespace DocExtractor.ML.Recommendation
 {
@@ -10,8 +13,22 @@ namespace DocExtractor.ML.Recommendation
     /// </summary>
     public class GroupItemRecommender
     {
+        private readonly IValueNormalizer _valueNormalizer;
+
+        private static readonly FieldDefinition RequiredValueField = new FieldDefinition
+        {
+            FieldName = "RequiredValue",
+            DisplayName = "要求值",
+            DataType = FieldDataType.Text
+        };
+
         /// <summary>相似度阈值，低于此值的组名不参与推荐</summary>
         public float SimilarityThreshold { get; set; } = 0.25f;
+
+        public GroupItemRecommender(IValueNormalizer? valueNormalizer = null)
+        {
+            _valueNormalizer = valueNormalizer ?? new DefaultValueNormalizer();
+        }
 
         /// <summary>
         /// 根据输入组名推荐细则项
@@ -61,7 +78,16 @@ namespace DocExtractor.ML.Recommendation
                         rec = new RecommendedItem { ItemName = key };
                         itemMap[key] = rec;
                     }
-                    rec.AddEvidence(match.Score, item.RequiredValue, item.SourceFile);
+
+                    string? normalizedRequiredValue = null;
+                    if (!string.IsNullOrWhiteSpace(item.RequiredValue))
+                    {
+                        normalizedRequiredValue = _valueNormalizer.Normalize(
+                            item.RequiredValue,
+                            RequiredValueField);
+                    }
+
+                    rec.AddEvidence(match.Score, normalizedRequiredValue ?? string.Empty, item.SourceFile);
                 }
             }
 
