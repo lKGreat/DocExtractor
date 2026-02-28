@@ -55,6 +55,36 @@ namespace DocExtractor.Tests.ML
             }
         }
 
+        [Fact]
+        public void Rollback_ShouldSwitchCurrentVersionAndRestoreModelFile()
+        {
+            string modelsDir = CreateTempDir();
+            try
+            {
+                var store = new ModelRegistryStore(modelsDir);
+
+                string source1 = Path.Combine(modelsDir, "v1.zip");
+                File.WriteAllText(source1, "model-v1");
+                store.PublishVersion("column_classifier", source1, 0.91, 100, "Standard", blockOnRegression: false);
+
+                string source2 = Path.Combine(modelsDir, "v2.zip");
+                File.WriteAllText(source2, "model-v2");
+                store.PublishVersion("column_classifier", source2, 0.93, 120, "Fine", blockOnRegression: false);
+
+                bool rolled = store.Rollback("column_classifier", "v1");
+                Assert.True(rolled);
+                Assert.Equal("v1", store.GetCurrentVersion("column_classifier"));
+
+                string currentFile = Path.Combine(modelsDir, "column_classifier.zip");
+                string content = File.ReadAllText(currentFile);
+                Assert.Equal("model-v1", content);
+            }
+            finally
+            {
+                SafeDeleteDir(modelsDir);
+            }
+        }
+
         private static string CreateTempDir()
         {
             string dir = Path.Combine(Path.GetTempPath(), "docextractor-tests-" + Guid.NewGuid().ToString("N"));

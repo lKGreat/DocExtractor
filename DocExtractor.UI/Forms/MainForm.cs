@@ -1014,6 +1014,40 @@ namespace DocExtractor.UI.Forms
             LoadConfigList(_currentConfigId);
         }
 
+        private void OnOpenModelManager()
+        {
+            using var form = new ModelManagerForm(_modelsDir, ReloadModelByName);
+            form.ShowDialog(this);
+        }
+
+        private void ReloadModelByName(string modelName)
+        {
+            try
+            {
+                if (string.Equals(modelName, "column_classifier", StringComparison.OrdinalIgnoreCase))
+                {
+                    string path = Path.Combine(_modelsDir, "column_classifier.zip");
+                    if (File.Exists(path)) _columnModel.Reload(path);
+                }
+                else if (string.Equals(modelName, "ner_model", StringComparison.OrdinalIgnoreCase))
+                {
+                    string path = Path.Combine(_modelsDir, "ner_model.zip");
+                    if (File.Exists(path)) _nerModel.Load(path);
+                }
+                else if (string.Equals(modelName, "section_classifier", StringComparison.OrdinalIgnoreCase))
+                {
+                    string path = Path.Combine(_modelsDir, "section_classifier.zip");
+                    if (File.Exists(path)) _sectionModel.Reload(path);
+                }
+
+                AppendLog($"模型已重载：{modelName}");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[警告] 模型重载失败：{modelName} - {ex.Message}");
+            }
+        }
+
         private void OnOpenDiagnostics()
         {
             using var form = new DiagnosticsForm(_dbPath, _modelsDir);

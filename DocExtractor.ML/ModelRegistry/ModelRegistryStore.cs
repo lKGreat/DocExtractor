@@ -91,6 +91,48 @@ namespace DocExtractor.ML.ModelRegistry
             return info;
         }
 
+        public IReadOnlyList<ModelVersionInfo> GetVersions(string modelName)
+        {
+            var registry = LoadRegistry();
+            if (!registry.TryGetValue(modelName, out var entry))
+                return Array.Empty<ModelVersionInfo>();
+            return entry.Versions
+                .OrderByDescending(v => v.TrainedAt)
+                .ToList();
+        }
+
+        public string? GetCurrentVersion(string modelName)
+        {
+            var registry = LoadRegistry();
+            if (!registry.TryGetValue(modelName, out var entry))
+                return null;
+            return entry.Current;
+        }
+
+        public bool Rollback(string modelName, string version)
+        {
+            var registry = LoadRegistry();
+            if (!registry.TryGetValue(modelName, out var entry))
+                return false;
+
+            var target = entry.Versions.FirstOrDefault(v => v.Version == version);
+            if (target == null) return false;
+
+            string source = Path.Combine(_versionsDir, target.FileName);
+            if (!File.Exists(source))
+                throw new ModelException(
+                    $"回滚失败，版本文件不存在：{source}",
+                    modelName,
+                    source);
+
+            string currentPath = Path.Combine(_modelsDir, modelName + ".zip");
+            File.Copy(source, currentPath, overwrite: true);
+
+            entry.Current = version;
+            SaveRegistry(registry);
+            return true;
+        }
+
         private int GetNextVersionNumber(ModelRegistryEntry entry)
         {
             int max = 0;
