@@ -3,36 +3,39 @@ using System.Collections.Generic;
 namespace DocExtractor.Core.Normalization
 {
     /// <summary>
-    /// 值清洗规则类型：每种类型对应一类原始值格式的提取逻辑。
+    /// 值清洗规则类型。
+    /// 分为两类：结构变换（改变值的结构）和核心提取（从注释中提取有意义的值）。
     /// </summary>
     public enum CleaningRuleType
     {
-        /// <summary>十六进制+描述：0x1-PPU待机模式 → 0x1</summary>
+        // ── Legacy types (kept for backward compat with serialized configs) ──
+
+        /// <summary>[旧] 十六进制+描述 → 已由 CoreValueExtraction 统一处理</summary>
         HexWithDescription,
-
-        /// <summary>数字+括号十六进制：0 （0x0） → 0</summary>
+        /// <summary>[旧] 数字+括号十六进制 → 已由 CoreValueExtraction 统一处理</summary>
         NumberWithParenHex,
-
         /// <summary>带单位范围：-0.5A～0.5A → -0.5/0.5</summary>
         RangeWithUnit,
-
         /// <summary>整数范围：1-255 → 1/255</summary>
         IntegerRange,
-
-        /// <summary>数字+括号注释：643(4.5A) → 643</summary>
+        /// <summary>[旧] 数字+括号注释 → 已由 CoreValueExtraction 统一处理</summary>
         NumberWithParenAnnotation,
-
-        /// <summary>数字+单位后缀：420s → 420</summary>
+        /// <summary>[旧] 数字+单位后缀 → 已由 CoreValueExtraction 统一处理</summary>
         NumberWithUnitSuffix,
-
         /// <summary>值±公差：220V±10V → 210/230</summary>
         ValueWithTolerance,
-
-        /// <summary>十六进制+括号描述：0x2（当前阴极B） → 0x2</summary>
+        /// <summary>[旧] 十六进制+括号描述 → 已由 CoreValueExtraction 统一处理</summary>
         HexWithParenDescription,
+        /// <summary>[旧] 中文文本映射为零 → 已由 CoreValueExtraction 统一处理</summary>
+        ChineseTextToZero,
 
-        /// <summary>中文文本映射为零：不变 → 0</summary>
-        ChineseTextToZero
+        // ── New universal type ──────────────────────────────────────────────
+
+        /// <summary>
+        /// 通用核心值提取：自动从任意注释/单位/描述中提取有意义的数值或十六进制值。
+        /// 替代所有旧的逐一提取规则。
+        /// </summary>
+        CoreValueExtraction
     }
 
     /// <summary>
@@ -47,90 +50,48 @@ namespace DocExtractor.Core.Normalization
         public bool IsEnabled { get; set; } = true;
         public int Priority { get; set; }
 
+        /// <summary>
+        /// 返回默认规则集：3 条结构变换 + 1 条通用提取。
+        /// </summary>
         public static List<ValueCleaningRule> GetDefaultRules()
         {
             return new List<ValueCleaningRule>
             {
                 new ValueCleaningRule
                 {
-                    RuleType = CleaningRuleType.HexWithDescription,
-                    DisplayName = "十六进制+描述",
-                    Description = "提取十六进制值，去除后续中文描述",
-                    Example = "0x1-PPU待机模式 → 0x1",
+                    RuleType = CleaningRuleType.ValueWithTolerance,
+                    DisplayName = "值±公差 → 范围",
+                    Description = "将值±公差转换为范围",
+                    Example = "220V±10V → 210/230",
                     IsEnabled = true,
                     Priority = 10
                 },
                 new ValueCleaningRule
                 {
-                    RuleType = CleaningRuleType.NumberWithParenHex,
-                    DisplayName = "数字+括号十六进制",
-                    Description = "提取前导数字，去除括号中的十六进制注释",
-                    Example = "0 （0x0） → 0",
+                    RuleType = CleaningRuleType.RangeWithUnit,
+                    DisplayName = "范围+单位 → 范围",
+                    Description = "将带单位的范围转换为斜杠分隔",
+                    Example = "-0.5A～0.5A → -0.5/0.5",
                     IsEnabled = true,
                     Priority = 20
                 },
                 new ValueCleaningRule
                 {
-                    RuleType = CleaningRuleType.RangeWithUnit,
-                    DisplayName = "范围+单位",
-                    Description = "将带单位的范围转换为斜杠分隔",
-                    Example = "-0.5A～0.5A → -0.5/0.5",
+                    RuleType = CleaningRuleType.IntegerRange,
+                    DisplayName = "整数范围 → 范围",
+                    Description = "将整数范围转换为斜杠分隔",
+                    Example = "1-255 → 1/255",
                     IsEnabled = true,
                     Priority = 30
                 },
                 new ValueCleaningRule
                 {
-                    RuleType = CleaningRuleType.IntegerRange,
-                    DisplayName = "整数范围",
-                    Description = "将整数范围转换为斜杠分隔",
-                    Example = "1-255 → 1/255",
+                    RuleType = CleaningRuleType.CoreValueExtraction,
+                    DisplayName = "通用值提取",
+                    Description = "自动提取核心数值/十六进制，去除单位、描述、注释",
+                    Example = "0x1-PPU待机模式→0x1, 100,单位秒→100, 复归为1→1",
                     IsEnabled = true,
                     Priority = 40
-                },
-                new ValueCleaningRule
-                {
-                    RuleType = CleaningRuleType.NumberWithParenAnnotation,
-                    DisplayName = "数字+括号注释",
-                    Description = "提取前导数字，去除括号中的注释",
-                    Example = "643(4.5A) → 643",
-                    IsEnabled = true,
-                    Priority = 50
-                },
-                new ValueCleaningRule
-                {
-                    RuleType = CleaningRuleType.NumberWithUnitSuffix,
-                    DisplayName = "数字+单位后缀",
-                    Description = "提取数字，去除尾部单位后缀",
-                    Example = "420s → 420",
-                    IsEnabled = true,
-                    Priority = 60
-                },
-                new ValueCleaningRule
-                {
-                    RuleType = CleaningRuleType.ValueWithTolerance,
-                    DisplayName = "值±公差",
-                    Description = "将值±公差转换为范围",
-                    Example = "220V±10V → 210/230",
-                    IsEnabled = true,
-                    Priority = 25
-                },
-                new ValueCleaningRule
-                {
-                    RuleType = CleaningRuleType.HexWithParenDescription,
-                    DisplayName = "十六进制+括号描述",
-                    Description = "提取十六进制值，去除括号中的中文描述",
-                    Example = "0x2（当前阴极B） → 0x2",
-                    IsEnabled = true,
-                    Priority = 15
-                },
-                new ValueCleaningRule
-                {
-                    RuleType = CleaningRuleType.ChineseTextToZero,
-                    DisplayName = "中文文本归零",
-                    Description = "将「不变」等中文文本映射为 0",
-                    Example = "不变 → 0",
-                    IsEnabled = true,
-                    Priority = 70
                 }
             };
         }
