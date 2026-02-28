@@ -41,6 +41,12 @@ namespace DocExtractor.Core.Models
 
         /// <summary>值归一化选项（可选）</summary>
         public ValueNormalizationOptions? NormalizationOptions { get; set; }
+
+        /// <summary>是否启用跨表关联补全</summary>
+        public bool EnableCrossTableLinking { get; set; } = false;
+
+        /// <summary>跨表关联键值域重叠阈值</summary>
+        public double CrossTableOverlapThreshold { get; set; } = 0.6;
     }
 
     public enum TableSelectionMode

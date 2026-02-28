@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using DocExtractor.Core.Exceptions;
 using DocExtractor.Core.Interfaces;
+using DocExtractor.Core.Linking;
 using DocExtractor.Core.Models;
 using DocExtractor.Core.Normalization;
 using DocExtractor.Core.Splitting;
@@ -159,6 +160,20 @@ namespace DocExtractor.Core.Pipeline
 
                 if (skippedNoMatch > 0)
                     result.Warnings.Add($"跳过 {skippedNoMatch} 个表格（列名未匹配到任何字段）");
+
+                if (config.EnableCrossTableLinking && allRecords.Count > 0)
+                {
+                    try
+                    {
+                        var linker = new CrossTableLinker();
+                        allRecords = linker.Link(allRecords, config.CrossTableOverlapThreshold);
+                        result.Warnings.Add("已执行跨表关联补全");
+                    }
+                    catch (Exception ex)
+                    {
+                        result.Warnings.Add($"[跨表关联警告] {ex.Message}");
+                    }
+                }
 
                 Report(progress, "拆分", "正在应用拆分规则...", 75);
 
