@@ -157,27 +157,27 @@ namespace DocExtractor.Data.Repositories
 
         // ── 内置配置种子 ────────────────────────────────────────────────────
 
-        /// <summary>确保内置配置已存在于数据库中</summary>
+        /// <summary>
+        /// 确保内置配置存在并与代码定义保持同步。
+        /// 对已存在的内置配置执行强制覆盖更新（保证新增字段如 GroupName 能生效）。
+        /// </summary>
         public void SeedBuiltInConfigs()
         {
             foreach (var config in BuiltInConfigs.GetAll())
             {
-                // 检查是否已存在
-                using var checkCmd = new SQLiteCommand(
-                    "SELECT COUNT(*) FROM ExtractionConfig WHERE ConfigName=@name", _conn);
-                checkCmd.Parameters.AddWithValue("@name", config.ConfigName);
-                long count = (long)checkCmd.ExecuteScalar()!;
+                string json = JsonConvert.SerializeObject(config, Formatting.None);
 
-                if (count == 0)
-                {
-                    string json = JsonConvert.SerializeObject(config, Formatting.None);
-                    using var insertCmd = new SQLiteCommand(
-                        "INSERT INTO ExtractionConfig (ConfigName, ConfigJson) VALUES (@name, @json)",
-                        _conn);
-                    insertCmd.Parameters.AddWithValue("@name", config.ConfigName);
-                    insertCmd.Parameters.AddWithValue("@json", json);
-                    insertCmd.ExecuteNonQuery();
-                }
+                // INSERT OR REPLACE：内置配置始终以代码定义为准
+                using var cmd = new SQLiteCommand(
+                    @"INSERT INTO ExtractionConfig (ConfigName, ConfigJson)
+                      VALUES (@name, @json)
+                      ON CONFLICT(ConfigName) DO UPDATE
+                        SET ConfigJson = excluded.ConfigJson,
+                            UpdatedAt  = datetime('now')",
+                    _conn);
+                cmd.Parameters.AddWithValue("@name", config.ConfigName);
+                cmd.Parameters.AddWithValue("@json", json);
+                cmd.ExecuteNonQuery();
             }
         }
 

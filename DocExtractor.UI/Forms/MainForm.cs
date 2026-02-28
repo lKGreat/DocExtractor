@@ -652,11 +652,44 @@ namespace DocExtractor.UI.Forms
 
             foreach (var f in fields)
             {
-                _resultGrid.Columns.Add(new DataGridViewTextBoxColumn
+                var col = new DataGridViewTextBoxColumn
                 {
                     Name = f.FieldName,
                     HeaderText = f.DisplayName.Length > 0 ? f.DisplayName : f.FieldName
-                });
+                };
+
+                // 组名列：蓝绿色表头背景以区分结构字段
+                if (f.FieldName == "GroupName")
+                {
+                    col.HeaderCell.Style.BackColor = Color.FromArgb(0, 176, 240);
+                    col.HeaderCell.Style.ForeColor = Color.White;
+                    col.DefaultCellStyle.BackColor = Color.FromArgb(235, 250, 255);
+                    col.DefaultCellStyle.Font = new System.Drawing.Font(_resultGrid.Font, System.Drawing.FontStyle.Bold);
+                    col.MinimumWidth = 140;
+                }
+
+                _resultGrid.Columns.Add(col);
+            }
+
+            // 如果有 GroupName 数据但配置里没有该字段，追加兜底列（确保始终可见）
+            bool hasGroupNameCol = fields.Any(f => f.FieldName == "GroupName");
+            bool hasGroupNameData = records.Any(r => r.Fields.ContainsKey("GroupName") &&
+                                                      !string.IsNullOrWhiteSpace(r.Fields["GroupName"]));
+            int groupNameColIdx = -1;
+            if (!hasGroupNameCol && hasGroupNameData)
+            {
+                var col = new DataGridViewTextBoxColumn
+                {
+                    Name = "GroupName",
+                    HeaderText = "组名"
+                };
+                col.HeaderCell.Style.BackColor = Color.FromArgb(0, 176, 240);
+                col.HeaderCell.Style.ForeColor = Color.White;
+                col.DefaultCellStyle.BackColor = Color.FromArgb(235, 250, 255);
+                col.DefaultCellStyle.Font = new System.Drawing.Font(_resultGrid.Font, System.Drawing.FontStyle.Bold);
+                col.MinimumWidth = 140;
+                _resultGrid.Columns.Insert(2, col);   // 插在最前（来源、完整 后面）
+                groupNameColIdx = 2;
             }
 
             foreach (var r in records)
@@ -669,8 +702,12 @@ namespace DocExtractor.UI.Forms
                 if (!r.IsComplete)
                     row.DefaultCellStyle.BackColor = Color.FromArgb(255, 235, 235);
 
+                if (groupNameColIdx >= 0)
+                    row.Cells[groupNameColIdx].Value = r.GetField("GroupName");
+
+                int offset = groupNameColIdx >= 0 ? 1 : 0;  // 兜底列已占一格，后移
                 for (int i = 0; i < fields.Count; i++)
-                    row.Cells[i + 2].Value = r.GetField(fields[i].FieldName);
+                    row.Cells[i + 2 + offset].Value = r.GetField(fields[i].FieldName);
 
                 _resultGrid.Rows.Add(row);
             }
