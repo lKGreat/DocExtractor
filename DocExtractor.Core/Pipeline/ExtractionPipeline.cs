@@ -464,6 +464,13 @@ namespace DocExtractor.Core.Pipeline
             var result = new List<ExtractedRecord>();
             foreach (var record in records)
                 result.AddRange(splitter.Split(record, syntheticRule));
+
+            foreach (var rec in result)
+            {
+                if (!rec.Fields.ContainsKey("TimeAxis"))
+                    rec.Fields["TimeAxis"] = "0";
+            }
+
             return result;
         }
 

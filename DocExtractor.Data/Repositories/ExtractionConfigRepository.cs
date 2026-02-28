@@ -166,9 +166,10 @@ namespace DocExtractor.Data.Repositories
         {
             foreach (var config in BuiltInConfigs.GetAll())
             {
+                PreserveUserSettings(config);
+
                 string json = JsonConvert.SerializeObject(config, Formatting.None);
 
-                // INSERT OR REPLACE：内置配置始终以代码定义为准
                 using var cmd = new SQLiteCommand(
                     @"INSERT INTO ExtractionConfig (ConfigName, ConfigJson)
                       VALUES (@name, @json)
@@ -180,6 +181,26 @@ namespace DocExtractor.Data.Repositories
                 cmd.Parameters.AddWithValue("@json", json);
                 cmd.ExecuteNonQuery();
             }
+        }
+
+        /// <summary>
+        /// 从数据库读取已保存的同名配置，将用户修改的运行时偏好（归一化选项等）
+        /// 合并到即将写入的内置配置中，避免每次启动丢失用户设置。
+        /// </summary>
+        private void PreserveUserSettings(ExtractionConfig config)
+        {
+            using var readCmd = new SQLiteCommand(
+                "SELECT ConfigJson FROM ExtractionConfig WHERE ConfigName=@name", _conn);
+            readCmd.Parameters.AddWithValue("@name", config.ConfigName);
+            var existingJson = readCmd.ExecuteScalar() as string;
+            if (existingJson == null) return;
+
+            var existing = JsonConvert.DeserializeObject<ExtractionConfig>(existingJson);
+            if (existing == null) return;
+
+            config.EnableValueNormalization = existing.EnableValueNormalization;
+            if (existing.NormalizationOptions != null)
+                config.NormalizationOptions = existing.NormalizationOptions;
         }
 
         public void Dispose() => _conn.Dispose();
