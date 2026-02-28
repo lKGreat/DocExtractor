@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using DocExtractor.Core.Interfaces;
@@ -13,10 +14,13 @@ using DocExtractor.Data.Repositories;
 using DocExtractor.ML.ColumnClassifier;
 using DocExtractor.ML.EntityExtractor;
 using DocExtractor.ML.Inference;
+using DocExtractor.ML.Recommendation;
 using DocExtractor.ML.SectionClassifier;
+using DocExtractor.ML.Training;
 using DocExtractor.Parsing.Excel;
 using DocExtractor.Parsing.Word;
 using DocExtractor.UI.Helpers;
+using Newtonsoft.Json;
 
 namespace DocExtractor.UI.Forms
 {
@@ -36,6 +40,7 @@ namespace DocExtractor.UI.Forms
         private ExtractionConfigRepository _configRepo;
         private List<(int Id, string Name)> _configItems = new List<(int, string)>();
         private int _currentConfigId = -1;
+        private CancellationTokenSource _trainCts;
 
         public MainForm()
         {
@@ -57,6 +62,8 @@ namespace DocExtractor.UI.Forms
             LoadConfigList();
             LoadConfigToGrids();
             RefreshTrainingStats();
+            OnPresetChanged(null, EventArgs.Empty); // 初始化预设参数状态
+            RefreshRecommendCombo();
         }
 
         // ── 事件绑定 ──────────────────────────────────────────────────────────
@@ -132,6 +139,11 @@ namespace DocExtractor.UI.Forms
             _trainSectionBtn.Click += OnTrainSectionClassifier;
             _importCsvBtn.Click += OnImportTrainingData;
             _importSectionWordBtn.Click += OnImportSectionFromWord;
+            _presetCombo.SelectedIndexChanged += OnPresetChanged;
+            _cancelTrainBtn.Click += OnCancelTraining;
+
+            // Tab 1：智能推荐
+            _recommendBtn.Click += OnRecommend;
         }
 
         // ── Tab 1：数据抽取事件 ───────────────────────────────────────────────
@@ -216,6 +228,9 @@ namespace DocExtractor.UI.Forms
                 AppendLog($"\n完成！共抽取 {total} 条记录（完整: {complete}，不完整: {total - complete}，列表仅显示完整记录）");
                 _statusBarLabel.Text = $"完成 | 完整 {complete}/{total} 条记录";
                 _exportBtn.Enabled = complete > 0;
+
+                // 自动学习：将有 GroupName 的完整记录写入知识库
+                AutoLearnGroupKnowledge(completeResults);
 
                 if (complete > 0)
                     MessageHelper.Success(this, $"抽取完成，共 {total} 条（完整 {complete} 条已显示）");
@@ -406,12 +421,111 @@ namespace DocExtractor.UI.Forms
             MessageHelper.Success(this, "拆分规则已保存");
         }
 
+        // ── Tab 4：训练参数管理 ───────────────────────────────────────────────
+
+        private void OnPresetChanged(object sender, EventArgs e)
+        {
+            int idx = _presetCombo.SelectedIndex;
+            bool isCustom = idx == 3;
+
+            // 启用/禁用参数控件
+            _cvFoldsSpinner.Enabled = isCustom;
+            _testFractionSpinner.Enabled = isCustom;
+            _augmentCheckbox.Enabled = isCustom;
+            _colIterSpinner.Enabled = isCustom;
+            _nerIterSpinner.Enabled = isCustom;
+            _nerLeavesSpinner.Enabled = isCustom;
+            _nerLrSpinner.Enabled = isCustom;
+            _secTreesSpinner.Enabled = isCustom;
+            _secLeavesSpinner.Enabled = isCustom;
+            _secMinLeafSpinner.Enabled = isCustom;
+
+            if (isCustom) return;
+
+            // 自动填充预设参数
+            TrainingParameters p;
+            switch (idx)
+            {
+                case 0: p = TrainingParameters.Fast(); break;
+                case 2: p = TrainingParameters.Fine(); break;
+                default: p = TrainingParameters.Standard(); break;
+            }
+            ApplyPresetToUI(p);
+        }
+
+        private void ApplyPresetToUI(TrainingParameters p)
+        {
+            _cvFoldsSpinner.Value = p.CrossValidationFolds;
+            _testFractionSpinner.Value = (decimal)p.TestFraction;
+            _augmentCheckbox.Checked = p.EnableAugmentation;
+            _colIterSpinner.Value = p.ColumnMaxIterations;
+            _nerIterSpinner.Value = p.NerIterations;
+            _nerLeavesSpinner.Value = p.NerLeaves;
+            _nerLrSpinner.Value = (decimal)p.NerLearningRate;
+            _secTreesSpinner.Value = p.SectionTrees;
+            _secLeavesSpinner.Value = p.SectionLeaves;
+            _secMinLeafSpinner.Value = p.SectionMinLeaf;
+        }
+
+        private TrainingParameters BuildTrainingParameters()
+        {
+            return new TrainingParameters
+            {
+                CrossValidationFolds = (int)_cvFoldsSpinner.Value,
+                TestFraction = (double)_testFractionSpinner.Value,
+                EnableAugmentation = _augmentCheckbox.Checked,
+                ColumnMaxIterations = (int)_colIterSpinner.Value,
+                NerIterations = (int)_nerIterSpinner.Value,
+                NerLeaves = (int)_nerLeavesSpinner.Value,
+                NerLearningRate = (double)_nerLrSpinner.Value,
+                SectionTrees = (int)_secTreesSpinner.Value,
+                SectionLeaves = (int)_secLeavesSpinner.Value,
+                SectionMinLeaf = (int)_secMinLeafSpinner.Value
+            };
+        }
+
+        private void SetTrainingUIState(bool training)
+        {
+            _trainColumnBtn.Enabled = !training;
+            _trainNerBtn.Enabled = !training;
+            _trainSectionBtn.Enabled = !training;
+            _cancelTrainBtn.Enabled = training;
+            _presetCombo.Enabled = !training;
+            _trainProgressBar.Style = training ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;
+        }
+
+        private void OnCancelTraining(object sender, EventArgs e)
+        {
+            _trainCts?.Cancel();
+            AppendTrainLog("已请求取消训练...");
+        }
+
+        private void ShowTrainingComparison(string modelType, string currentMetrics, int currentSamples)
+        {
+            try
+            {
+                using var repo = new TrainingDataRepository(_dbPath);
+                var prev = repo.GetLatestRecord(modelType);
+                if (prev != null)
+                {
+                    _evalCompareLabel.Text = $"上次（{prev.TrainedAt}）：样本 {prev.SampleCount} → 当前 {currentSamples} | {prev.MetricsJson}";
+                }
+                else
+                {
+                    _evalCompareLabel.Text = "（首次训练，无历史对比）";
+                }
+            }
+            catch
+            {
+                _evalCompareLabel.Text = "";
+            }
+        }
+
         // ── Tab 4：模型训练事件 ───────────────────────────────────────────────
 
         private async void OnTrainColumnClassifier(object sender, EventArgs e)
         {
-            _trainColumnBtn.Enabled = false;
-            _trainProgressBar.Style = ProgressBarStyle.Marquee;
+            SetTrainingUIState(true);
             _trainLogBox.Clear();
 
             try
@@ -433,16 +547,33 @@ namespace DocExtractor.UI.Forms
                     Label = s.FieldName
                 });
 
+                var parameters = BuildTrainingParameters();
+                _trainCts = new CancellationTokenSource();
+                var ct = _trainCts.Token;
+
+                ShowTrainingComparison("ColumnClassifier", "", samples.Count);
+
                 var progress = new Progress<string>(msg => AppendTrainLog(msg));
                 var trainer = new ColumnClassifierTrainer();
                 string modelPath = Path.Combine(_modelsDir, "column_classifier.zip");
 
-                var eval = await Task.Run(() => trainer.Train(inputs, modelPath, progress));
+                var eval = await Task.Run(() => trainer.Train(inputs, modelPath, progress, parameters, ct));
 
                 _columnModel.Reload(modelPath);
                 _evalLabel.Text = $"列名分类器：{eval}";
                 AppendTrainLog($"\n训练完成！{eval}");
+
+                // 保存训练历史
+                using (var repo = new TrainingDataRepository(_dbPath))
+                    repo.SaveTrainingRecord("ColumnClassifier", samples.Count, eval.ToString(),
+                        JsonConvert.SerializeObject(parameters));
+
                 MessageHelper.Success(this, "列名分类器训练完成");
+            }
+            catch (OperationCanceledException)
+            {
+                AppendTrainLog("\n训练已取消");
+                MessageHelper.Warn(this, "训练已取消");
             }
             catch (Exception ex)
             {
@@ -451,16 +582,16 @@ namespace DocExtractor.UI.Forms
             }
             finally
             {
-                _trainColumnBtn.Enabled = true;
-                _trainProgressBar.Style = ProgressBarStyle.Continuous;
+                _trainCts?.Dispose();
+                _trainCts = null;
+                SetTrainingUIState(false);
                 RefreshTrainingStats();
             }
         }
 
         private async void OnTrainNer(object sender, EventArgs e)
         {
-            _trainNerBtn.Enabled = false;
-            _trainProgressBar.Style = ProgressBarStyle.Marquee;
+            SetTrainingUIState(true);
 
             try
             {
@@ -475,16 +606,32 @@ namespace DocExtractor.UI.Forms
                     return;
                 }
 
+                var parameters = BuildTrainingParameters();
+                _trainCts = new CancellationTokenSource();
+                var ct = _trainCts.Token;
+
+                ShowTrainingComparison("NER", "", samples.Count);
+
                 var progress = new Progress<string>(msg => AppendTrainLog(msg));
                 var trainer = new NerTrainer();
                 string modelPath = Path.Combine(_modelsDir, "ner_model.zip");
 
-                var eval = await Task.Run(() => trainer.Train(samples, modelPath, progress));
+                var eval = await Task.Run(() => trainer.Train(samples, modelPath, progress, parameters, ct));
                 _nerModel.Load(modelPath);
 
                 _evalLabel.Text = $"NER 模型：{eval}";
                 AppendTrainLog($"\nNER 训练完成！{eval}");
+
+                using (var repo = new TrainingDataRepository(_dbPath))
+                    repo.SaveTrainingRecord("NER", samples.Count, eval.ToString(),
+                        JsonConvert.SerializeObject(parameters));
+
                 MessageHelper.Success(this, "NER 模型训练完成");
+            }
+            catch (OperationCanceledException)
+            {
+                AppendTrainLog("\nNER 训练已取消");
+                MessageHelper.Warn(this, "训练已取消");
             }
             catch (Exception ex)
             {
@@ -493,8 +640,9 @@ namespace DocExtractor.UI.Forms
             }
             finally
             {
-                _trainNerBtn.Enabled = true;
-                _trainProgressBar.Style = ProgressBarStyle.Continuous;
+                _trainCts?.Dispose();
+                _trainCts = null;
+                SetTrainingUIState(false);
                 RefreshTrainingStats();
             }
         }
@@ -535,8 +683,7 @@ namespace DocExtractor.UI.Forms
 
         private async void OnTrainSectionClassifier(object sender, EventArgs e)
         {
-            _trainSectionBtn.Enabled = false;
-            _trainProgressBar.Style = ProgressBarStyle.Marquee;
+            SetTrainingUIState(true);
             AppendTrainLog("开始训练章节标题分类器...");
 
             try
@@ -561,20 +708,36 @@ namespace DocExtractor.UI.Forms
                     HasNumberPrefix = s.ParagraphText.Length > 0 && char.IsDigit(s.ParagraphText[0]) ? 1f : 0f,
                     TextLength = s.ParagraphText.Length,
                     HasHeadingStyle = s.HasHeadingStyle ? 1f : 0f,
-                    Position = 0f,   // 导入时不保留位置，训练时设为0
+                    Position = 0f,
                     IsHeading = s.IsHeading
                 });
+
+                var parameters = BuildTrainingParameters();
+                _trainCts = new CancellationTokenSource();
+                var ct = _trainCts.Token;
+
+                ShowTrainingComparison("SectionClassifier", "", samples.Count);
 
                 var progress = new Progress<string>(msg => AppendTrainLog(msg));
                 var trainer = new SectionClassifierTrainer();
                 string modelPath = Path.Combine(_modelsDir, "section_classifier.zip");
 
-                var eval = await Task.Run(() => trainer.Train(inputs, modelPath, progress));
+                var eval = await Task.Run(() => trainer.Train(inputs, modelPath, progress, parameters, ct));
 
                 _sectionModel.Reload(modelPath);
                 _evalLabel.Text = $"章节标题分类器：{eval}";
                 AppendTrainLog($"\n章节标题分类器训练完成！\n{eval}");
+
+                using (var repo = new TrainingDataRepository(_dbPath))
+                    repo.SaveTrainingRecord("SectionClassifier", samples.Count, eval.ToString(),
+                        JsonConvert.SerializeObject(parameters));
+
                 MessageHelper.Success(this, "章节标题分类器训练完成！");
+            }
+            catch (OperationCanceledException)
+            {
+                AppendTrainLog("\n章节标题训练已取消");
+                MessageHelper.Warn(this, "训练已取消");
             }
             catch (Exception ex)
             {
@@ -583,8 +746,9 @@ namespace DocExtractor.UI.Forms
             }
             finally
             {
-                _trainSectionBtn.Enabled = true;
-                _trainProgressBar.Style = ProgressBarStyle.Continuous;
+                _trainCts?.Dispose();
+                _trainCts = null;
+                SetTrainingUIState(false);
                 RefreshTrainingStats();
             }
         }
@@ -638,6 +802,155 @@ namespace DocExtractor.UI.Forms
             catch (Exception ex)
             {
                 MessageHelper.Error(this, $"导入失败：{ex.Message}");
+            }
+        }
+
+        // ── 智能推荐 ────────────────────────────────────────────────────────────
+
+        private void AutoLearnGroupKnowledge(List<ExtractedRecord> completeResults)
+        {
+            try
+            {
+                var withGroup = completeResults
+                    .Where(r => r.Fields.ContainsKey("GroupName")
+                                && !string.IsNullOrWhiteSpace(r.Fields["GroupName"]))
+                    .ToList();
+
+                if (withGroup.Count == 0) return;
+
+                using var repo = new GroupKnowledgeRepository(_dbPath);
+                var groups = withGroup.GroupBy(r => r.Fields["GroupName"]).ToList();
+
+                foreach (var g in groups)
+                    repo.AddGroupItems(g.Key, g.ToList());
+
+                AppendLog($"知识库已学习 {groups.Count} 个组、{withGroup.Count} 条记录");
+
+                // 刷新推荐面板的组名下拉列表和知识库计数
+                RefreshRecommendCombo();
+                RefreshTrainingStats();
+
+                // 自动切换到推荐 Tab 并填入第一个组名
+                _resultTabs.SelectedIndex = 1;
+                if (_recommendGroupCombo.Items.Count > 0 && _recommendGroupCombo.SelectedIndex < 0)
+                    _recommendGroupCombo.SelectedIndex = 0;
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[警告] 知识库学习失败: {ex.Message}");
+            }
+        }
+
+        private void RefreshRecommendCombo()
+        {
+            try
+            {
+                var items = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                // 从知识库获取已知组名
+                using (var repo = new GroupKnowledgeRepository(_dbPath))
+                {
+                    foreach (var g in repo.GetDistinctGroupNames())
+                        items.Add(g);
+                }
+
+                // 从当前抽取结果获取组名
+                foreach (var r in _lastResults)
+                {
+                    string gn = r.GetField("GroupName");
+                    if (!string.IsNullOrWhiteSpace(gn))
+                        items.Add(GroupKnowledgeRepository.NormalizeGroupName(gn));
+                }
+
+                _recommendGroupCombo.Items.Clear();
+                foreach (var item in items.OrderBy(x => x))
+                    _recommendGroupCombo.Items.Add(item);
+            }
+            catch { }
+        }
+
+        private void OnRecommend(object sender, EventArgs e)
+        {
+            string groupName = _recommendGroupCombo.Text?.Trim();
+            if (string.IsNullOrWhiteSpace(groupName))
+            {
+                MessageHelper.Warn(this, "请输入或选择一个组名");
+                return;
+            }
+
+            _recommendGrid.Rows.Clear();
+
+            try
+            {
+                List<string> allGroupNames;
+                using (var repo = new GroupKnowledgeRepository(_dbPath))
+                {
+                    allGroupNames = repo.GetDistinctGroupNames();
+                    _recommendCountLabel.Text = $"知识库：{repo.GetKnowledgeCount()} 条";
+                }
+
+                if (allGroupNames.Count == 0)
+                {
+                    _recommendHintLabel.Visible = true;
+                    _recommendGrid.Visible = false;
+                    return;
+                }
+
+                var recommender = new GroupItemRecommender();
+                // 使用回调模式获取数据，避免 ML 项目依赖 Data 项目
+                var results = recommender.Recommend(
+                    groupName,
+                    allGroupNames,
+                    gn =>
+                    {
+                        using var repo = new GroupKnowledgeRepository(_dbPath);
+                        var items = repo.GetItemsForGroup(gn);
+                        return items.ConvertAll(gi => new KnowledgeItem
+                        {
+                            ItemName = gi.ItemName,
+                            RequiredValue = gi.RequiredValue,
+                            SourceFile = gi.SourceFile
+                        });
+                    });
+
+                if (results.Count == 0)
+                {
+                    _recommendHintLabel.Text = $"未找到与「{groupName}」相似的组名。\n请先通过数据抽取积累更多文档，系统会自动学习组名与细则的对应关系。";
+                    _recommendHintLabel.Visible = true;
+                    _recommendGrid.Visible = false;
+                    return;
+                }
+
+                _recommendHintLabel.Visible = false;
+                _recommendGrid.Visible = true;
+
+                for (int i = 0; i < results.Count; i++)
+                {
+                    var item = results[i];
+                    int rowIdx = _recommendGrid.Rows.Add(
+                        (i + 1).ToString(),
+                        item.ItemName,
+                        item.TypicalRequiredValue ?? "",
+                        $"{item.Confidence:P1}",
+                        $"{item.OccurrenceCount} 次",
+                        string.Join(", ", item.SourceFiles.Select(f => Path.GetFileName(f)))
+                    );
+
+                    // 置信度着色
+                    var row = _recommendGrid.Rows[rowIdx];
+                    if (item.Confidence >= 0.8f)
+                        row.DefaultCellStyle.BackColor = Color.FromArgb(230, 255, 230);     // 绿色
+                    else if (item.Confidence >= 0.5f)
+                        row.DefaultCellStyle.BackColor = Color.FromArgb(255, 255, 220);     // 黄色
+                    else
+                        row.DefaultCellStyle.ForeColor = Color.Gray;                         // 灰色
+                }
+
+                AppendLog($"推荐完成：组名「{groupName}」→ {results.Count} 条推荐项");
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"推荐失败：{ex.Message}");
             }
         }
 
@@ -862,6 +1175,15 @@ namespace DocExtractor.UI.Forms
                 _colSampleCountLabel.Text = $"列名分类样本：{repo.GetColumnSampleCount()} 条";
                 _nerSampleCountLabel.Text = $"NER 标注样本：{repo.GetNerSampleCount()} 条";
                 _sectionSampleCountLabel.Text = $"章节标题样本：{repo.GetSectionSampleCount()} 条";
+            }
+            catch { }
+
+            try
+            {
+                using var kRepo = new GroupKnowledgeRepository(_dbPath);
+                int count = kRepo.GetKnowledgeCount();
+                _knowledgeCountLabel.Text = $"推荐知识库：{count} 条";
+                _recommendCountLabel.Text = $"知识库：{count} 条";
             }
             catch { }
         }

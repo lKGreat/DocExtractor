@@ -8,6 +8,15 @@ using DocExtractor.ML.EntityExtractor;
 
 namespace DocExtractor.Data.Repositories
 {
+    /// <summary>训练历史记录</summary>
+    public class TrainingRecord
+    {
+        public int SampleCount { get; set; }
+        public string MetricsJson { get; set; }
+        public string ParametersJson { get; set; }
+        public string TrainedAt { get; set; }
+    }
+
     /// <summary>章节标题标注数据</summary>
     public class SectionAnnotation
     {
@@ -195,6 +204,57 @@ CREATE TABLE IF NOT EXISTS SectionTrainingData (
     OutlineLevel INTEGER NOT NULL DEFAULT 9,
     Source TEXT,
     CreatedAt TEXT DEFAULT (datetime('now'))
+);", _conn);
+            cmd.ExecuteNonQuery();
+        }
+
+        // ── 模型训练历史 ─────────────────────────────────────────────────
+
+        /// <summary>保存一次训练记录（用于 before/after 对比）</summary>
+        public void SaveTrainingRecord(string modelType, int sampleCount, string metricsJson, string parametersJson)
+        {
+            EnsureHistoryTable();
+            using var cmd = new SQLiteCommand(
+                "INSERT INTO ModelTrainingHistory (ModelType, SampleCount, MetricsJson, ParametersJson) " +
+                "VALUES (@mt, @sc, @mj, @pj)", _conn);
+            cmd.Parameters.AddWithValue("@mt", modelType);
+            cmd.Parameters.AddWithValue("@sc", sampleCount);
+            cmd.Parameters.AddWithValue("@mj", metricsJson);
+            cmd.Parameters.AddWithValue("@pj", parametersJson ?? (object)DBNull.Value);
+            cmd.ExecuteNonQuery();
+        }
+
+        /// <summary>获取某模型最近一次训练记录</summary>
+        public TrainingRecord GetLatestRecord(string modelType)
+        {
+            EnsureHistoryTable();
+            using var cmd = new SQLiteCommand(
+                "SELECT SampleCount, MetricsJson, ParametersJson, TrainedAt " +
+                "FROM ModelTrainingHistory WHERE ModelType=@mt ORDER BY Id DESC LIMIT 1", _conn);
+            cmd.Parameters.AddWithValue("@mt", modelType);
+
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read()) return null;
+
+            return new TrainingRecord
+            {
+                SampleCount = reader.GetInt32(0),
+                MetricsJson = reader.GetString(1),
+                ParametersJson = reader.IsDBNull(2) ? null : reader.GetString(2),
+                TrainedAt = reader.GetString(3)
+            };
+        }
+
+        private void EnsureHistoryTable()
+        {
+            using var cmd = new SQLiteCommand(@"
+CREATE TABLE IF NOT EXISTS ModelTrainingHistory (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ModelType TEXT NOT NULL,
+    TrainedAt TEXT DEFAULT (datetime('now')),
+    SampleCount INTEGER,
+    MetricsJson TEXT,
+    ParametersJson TEXT
 );", _conn);
             cmd.ExecuteNonQuery();
         }

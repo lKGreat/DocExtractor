@@ -146,6 +146,11 @@ namespace DocExtractor.UI.Forms
                 SplitterDistance = 500
             };
 
+            // 右侧上方：TabControl（抽取结果 + 智能推荐）
+            _resultTabs = new TabControl { Dock = DockStyle.Fill, Font = new Font("微软雅黑", 9) };
+
+            // ── 子 Tab：抽取结果 ──
+            var resultTabPage = new TabPage { Text = "抽取结果" };
             _resultGrid = new DataGridView
             {
                 Dock = DockStyle.Fill,
@@ -159,6 +164,59 @@ namespace DocExtractor.UI.Forms
                 },
                 Font = new Font("微软雅黑", 9)
             };
+            resultTabPage.Controls.Add(_resultGrid);
+
+            // ── 子 Tab：智能推荐 ──
+            var recommendTabPage = new TabPage { Text = "智能推荐" };
+            var recommendLayout = new Panel { Dock = DockStyle.Fill };
+
+            // 顶部：组名输入 + 按钮
+            var recommendTopPanel = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, Padding = new Padding(4) };
+            _recommendGroupCombo = new ComboBox { Width = 260, DropDownStyle = ComboBoxStyle.DropDown, Font = new Font("微软雅黑", 9) };
+            _recommendBtn = new AntdUI.Button { Text = "推荐", Type = AntdUI.TTypeMini.Primary, Size = new Size(70, 32) };
+            _recommendCountLabel = new Label { Text = "知识库：0 条", Width = 160, Height = 32, TextAlign = ContentAlignment.MiddleLeft };
+            recommendTopPanel.Controls.Add(new Label { Text = "组名:", Width = 40, Height = 32, TextAlign = ContentAlignment.MiddleRight });
+            recommendTopPanel.Controls.AddRange(new Control[] { _recommendGroupCombo, _recommendBtn, _recommendCountLabel });
+
+            // 推荐结果 Grid
+            _recommendGrid = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                AllowUserToAddRows = false,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                AlternatingRowsDefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.FromArgb(245, 250, 255) },
+                Font = new Font("微软雅黑", 9)
+            };
+            _recommendGrid.Columns.AddRange(new DataGridViewColumn[]
+            {
+                new DataGridViewTextBoxColumn { Name = "RecNo", HeaderText = "#", FillWeight = 5, ReadOnly = true },
+                new DataGridViewTextBoxColumn { Name = "RecItem", HeaderText = "推荐项目", FillWeight = 25 },
+                new DataGridViewTextBoxColumn { Name = "RecValue", HeaderText = "典型要求值", FillWeight = 25 },
+                new DataGridViewTextBoxColumn { Name = "RecConf", HeaderText = "置信度", FillWeight = 12 },
+                new DataGridViewTextBoxColumn { Name = "RecCount", HeaderText = "出现次数", FillWeight = 10 },
+                new DataGridViewTextBoxColumn { Name = "RecSources", HeaderText = "来源文件", FillWeight = 23 }
+            });
+
+            // 空提示
+            _recommendHintLabel = new Label
+            {
+                Text = "暂无匹配数据。请先通过数据抽取积累更多文档，\n系统会自动学习组名与细则的对应关系。",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                ForeColor = Color.Gray,
+                Font = new Font("微软雅黑", 10),
+                Visible = true
+            };
+
+            recommendLayout.Controls.Add(_recommendGrid);
+            recommendLayout.Controls.Add(_recommendHintLabel);
+            recommendLayout.Controls.Add(recommendTopPanel);
+            recommendTabPage.Controls.Add(recommendLayout);
+
+            _resultTabs.TabPages.Add(resultTabPage);
+            _resultTabs.TabPages.Add(recommendTabPage);
 
             _progressBar = new ProgressBar { Dock = DockStyle.Top, Height = 6, Style = ProgressBarStyle.Continuous };
             _logBox = new RichTextBox
@@ -175,7 +233,7 @@ namespace DocExtractor.UI.Forms
             logPanel.Controls.Add(_logBox);
             logPanel.Controls.Add(_progressBar);
 
-            rightSplit.Panel1.Controls.Add(_resultGrid);
+            rightSplit.Panel1.Controls.Add(_resultTabs);
             rightSplit.Panel2.Controls.Add(logPanel);
 
             extractSplit.Panel1.Controls.Add(filePanel);
@@ -285,42 +343,112 @@ namespace DocExtractor.UI.Forms
             var trainLayout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                RowCount = 4,
+                RowCount = 6,
                 ColumnCount = 1
             };
-            trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
-            trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
-            trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-            trainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));   // 统计
+            trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 130));  // 训练参数
+            trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));   // 操作按钮
+            trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 55));   // 结果对比
+            trainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));   // 日志
+            trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));    // 保留
 
-            // 统计
+            // ── 统计 ──
             var statsGroup = new GroupBox { Text = "训练数据统计", Dock = DockStyle.Fill };
             var statsFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(8) };
-            _colSampleCountLabel = new Label { Text = "列名分类样本：0 条", Width = 220, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
-            _nerSampleCountLabel = new Label { Text = "NER 标注样本：0 条", Width = 220, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
-            _sectionSampleCountLabel = new Label { Text = "章节标题样本：0 条", Width = 220, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
-            statsFlow.Controls.AddRange(new Control[] { _colSampleCountLabel, _nerSampleCountLabel, _sectionSampleCountLabel });
+            _colSampleCountLabel = new Label { Text = "列名分类样本：0 条", Width = 200, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
+            _nerSampleCountLabel = new Label { Text = "NER 标注样本：0 条", Width = 200, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
+            _sectionSampleCountLabel = new Label { Text = "章节标题样本：0 条", Width = 200, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
+            _knowledgeCountLabel = new Label { Text = "推荐知识库：0 条", Width = 200, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
+            _importCsvBtn = new AntdUI.Button { Text = "导入 CSV/Excel 标注", Size = new Size(160, 30) };
+            _importSectionWordBtn = new AntdUI.Button { Text = "从 Word 导入章节标注", Size = new Size(170, 30) };
+            statsFlow.Controls.AddRange(new Control[] { _colSampleCountLabel, _nerSampleCountLabel, _sectionSampleCountLabel, _knowledgeCountLabel, _importCsvBtn, _importSectionWordBtn });
             statsGroup.Controls.Add(statsFlow);
 
-            // 训练按钮
-            var trainBtnFlow = new FlowLayoutPanel { Dock = DockStyle.Fill };
+            // ── 训练参数 ──
+            var paramsGroup = new GroupBox { Text = "训练参数", Dock = DockStyle.Fill };
+            var paramsLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 10, RowCount = 3, Padding = new Padding(4) };
+            paramsLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+            paramsLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+            paramsLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+
+            // Row 0: 预设选择
+            _presetCombo = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDownList };
+            _presetCombo.Items.AddRange(new object[] { "快速", "标准", "精细", "自定义" });
+            _presetCombo.SelectedIndex = 1;
+            _cvFoldsSpinner = new NumericUpDown { Minimum = 0, Maximum = 10, Value = 5, Width = 55 };
+            _testFractionSpinner = new NumericUpDown { Minimum = 0.1m, Maximum = 0.5m, Value = 0.2m, Width = 55, DecimalPlaces = 1, Increment = 0.1m };
+            _augmentCheckbox = new CheckBox { Text = "数据增强", AutoSize = true, Checked = false };
+
+            paramsLayout.Controls.Add(new Label { Text = "预设:", TextAlign = ContentAlignment.MiddleRight, Width = 45 }, 0, 0);
+            paramsLayout.Controls.Add(_presetCombo, 1, 0);
+            paramsLayout.Controls.Add(new Label { Text = "CV折数:", TextAlign = ContentAlignment.MiddleRight, Width = 55 }, 2, 0);
+            paramsLayout.Controls.Add(_cvFoldsSpinner, 3, 0);
+            paramsLayout.Controls.Add(new Label { Text = "测试集:", TextAlign = ContentAlignment.MiddleRight, Width = 55 }, 4, 0);
+            paramsLayout.Controls.Add(_testFractionSpinner, 5, 0);
+            paramsLayout.Controls.Add(_augmentCheckbox, 6, 0);
+
+            // Row 1: 列名 + NER 参数
+            _colIterSpinner = new NumericUpDown { Minimum = 10, Maximum = 1000, Value = 200, Width = 60 };
+            _nerIterSpinner = new NumericUpDown { Minimum = 10, Maximum = 1000, Value = 200, Width = 60 };
+            _nerLeavesSpinner = new NumericUpDown { Minimum = 10, Maximum = 200, Value = 31, Width = 55 };
+            _nerLrSpinner = new NumericUpDown { Minimum = 0.01m, Maximum = 0.5m, Value = 0.1m, Width = 55, DecimalPlaces = 2, Increment = 0.01m };
+
+            paramsLayout.Controls.Add(new Label { Text = "列名迭代:", TextAlign = ContentAlignment.MiddleRight, Width = 65 }, 0, 1);
+            paramsLayout.Controls.Add(_colIterSpinner, 1, 1);
+            paramsLayout.Controls.Add(new Label { Text = "NER迭代:", TextAlign = ContentAlignment.MiddleRight, Width = 65 }, 2, 1);
+            paramsLayout.Controls.Add(_nerIterSpinner, 3, 1);
+            paramsLayout.Controls.Add(new Label { Text = "NER叶:", TextAlign = ContentAlignment.MiddleRight, Width = 55 }, 4, 1);
+            paramsLayout.Controls.Add(_nerLeavesSpinner, 5, 1);
+            paramsLayout.Controls.Add(new Label { Text = "NER率:", TextAlign = ContentAlignment.MiddleRight, Width = 50 }, 6, 1);
+            paramsLayout.Controls.Add(_nerLrSpinner, 7, 1);
+
+            // Row 2: 章节参数
+            _secTreesSpinner = new NumericUpDown { Minimum = 10, Maximum = 1000, Value = 200, Width = 60 };
+            _secLeavesSpinner = new NumericUpDown { Minimum = 5, Maximum = 100, Value = 20, Width = 55 };
+            _secMinLeafSpinner = new NumericUpDown { Minimum = 1, Maximum = 20, Value = 2, Width = 55 };
+
+            paramsLayout.Controls.Add(new Label { Text = "章节树数:", TextAlign = ContentAlignment.MiddleRight, Width = 65 }, 0, 2);
+            paramsLayout.Controls.Add(_secTreesSpinner, 1, 2);
+            paramsLayout.Controls.Add(new Label { Text = "章节叶:", TextAlign = ContentAlignment.MiddleRight, Width = 55 }, 2, 2);
+            paramsLayout.Controls.Add(_secLeavesSpinner, 3, 2);
+            paramsLayout.Controls.Add(new Label { Text = "最小叶样本:", TextAlign = ContentAlignment.MiddleRight, Width = 80 }, 4, 2);
+            paramsLayout.Controls.Add(_secMinLeafSpinner, 5, 2);
+
+            paramsGroup.Controls.Add(paramsLayout);
+
+            // ── 操作按钮 ──
+            var trainBtnFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(0, 6, 0, 0) };
             _trainColumnBtn = new AntdUI.Button { Text = "训练列名分类器", Type = AntdUI.TTypeMini.Primary, Size = new Size(150, 36) };
             _trainNerBtn = new AntdUI.Button { Text = "训练 NER 模型", Type = AntdUI.TTypeMini.Primary, Size = new Size(140, 36) };
             _trainSectionBtn = new AntdUI.Button { Text = "训练章节标题分类器", Type = AntdUI.TTypeMini.Primary, Size = new Size(170, 36) };
-            _importCsvBtn = new AntdUI.Button { Text = "导入 CSV/Excel 标注", Size = new Size(160, 36) };
-            _importSectionWordBtn = new AntdUI.Button { Text = "从 Word 导入章节标注", Size = new Size(170, 36) };
-            trainBtnFlow.Controls.AddRange(new Control[] { _trainColumnBtn, _trainNerBtn, _trainSectionBtn, _importCsvBtn, _importSectionWordBtn });
+            _cancelTrainBtn = new AntdUI.Button { Text = "取消训练", Type = AntdUI.TTypeMini.Error, Size = new Size(100, 36), Enabled = false };
+            trainBtnFlow.Controls.AddRange(new Control[] { _trainColumnBtn, _trainNerBtn, _trainSectionBtn, _cancelTrainBtn });
 
-            // 评估结果
+            // ── 结果对比 ──
             _evalLabel = new Label
             {
                 Text = "请先添加训练数据并点击训练按钮",
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Font = new Font("微软雅黑", 9)
+                Font = new Font("微软雅黑", 9),
+                AutoSize = false
             };
+            _evalCompareLabel = new Label
+            {
+                Text = "",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = new Font("微软雅黑", 8.5f),
+                ForeColor = Color.FromArgb(100, 100, 100)
+            };
+            var evalPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+            evalPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            evalPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            evalPanel.Controls.Add(_evalLabel, 0, 0);
+            evalPanel.Controls.Add(_evalCompareLabel, 0, 1);
 
-            // 训练日志
+            // ── 训练日志 ──
             _trainProgressBar = new ProgressBar { Dock = DockStyle.Top, Height = 6 };
             _trainLogBox = new RichTextBox
             {
@@ -335,9 +463,10 @@ namespace DocExtractor.UI.Forms
             trainLogPanel.Controls.Add(_trainProgressBar);
 
             trainLayout.Controls.Add(statsGroup, 0, 0);
-            trainLayout.Controls.Add(trainBtnFlow, 0, 1);
-            trainLayout.Controls.Add(_evalLabel, 0, 2);
-            trainLayout.Controls.Add(trainLogPanel, 0, 3);
+            trainLayout.Controls.Add(paramsGroup, 0, 1);
+            trainLayout.Controls.Add(trainBtnFlow, 0, 2);
+            trainLayout.Controls.Add(evalPanel, 0, 3);
+            trainLayout.Controls.Add(trainLogPanel, 0, 4);
             _trainingTab.Controls.Add(trainLayout);
 
             // ── 组装 Tabs ──────────────────────────────────────────────────
@@ -386,9 +515,17 @@ namespace DocExtractor.UI.Forms
         private AntdUI.Button _addFilesBtn;
         private AntdUI.Button _removeFileBtn;
         private AntdUI.Button _clearFilesBtn;
+        private TabControl _resultTabs;
         private DataGridView _resultGrid;
         private ProgressBar _progressBar;
         private RichTextBox _logBox;
+
+        // Tab 1：智能推荐
+        private ComboBox _recommendGroupCombo;
+        private AntdUI.Button _recommendBtn;
+        private Label _recommendCountLabel;
+        private DataGridView _recommendGrid;
+        private Label _recommendHintLabel;
 
         // Tab 2：字段配置
         private DataGridView _fieldsGrid;
@@ -407,14 +544,30 @@ namespace DocExtractor.UI.Forms
         private Label _colSampleCountLabel;
         private Label _nerSampleCountLabel;
         private Label _sectionSampleCountLabel;
+        private Label _knowledgeCountLabel;
         private AntdUI.Button _trainColumnBtn;
         private AntdUI.Button _trainNerBtn;
         private AntdUI.Button _trainSectionBtn;
+        private AntdUI.Button _cancelTrainBtn;
         private AntdUI.Button _importCsvBtn;
         private AntdUI.Button _importSectionWordBtn;
         private Label _evalLabel;
+        private Label _evalCompareLabel;
         private ProgressBar _trainProgressBar;
         private RichTextBox _trainLogBox;
+
+        // Tab 4：训练参数
+        private ComboBox _presetCombo;
+        private NumericUpDown _cvFoldsSpinner;
+        private NumericUpDown _testFractionSpinner;
+        private CheckBox _augmentCheckbox;
+        private NumericUpDown _colIterSpinner;
+        private NumericUpDown _nerIterSpinner;
+        private NumericUpDown _nerLeavesSpinner;
+        private NumericUpDown _nerLrSpinner;
+        private NumericUpDown _secTreesSpinner;
+        private NumericUpDown _secLeavesSpinner;
+        private NumericUpDown _secMinLeafSpinner;
 
         // 状态栏
         private StatusStrip _statusStrip;
