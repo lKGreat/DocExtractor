@@ -43,7 +43,10 @@ namespace DocExtractor.UI.Controls
                 new DataGridViewTextBoxColumn { Name = "GroupByColumn", HeaderText = "分组字段", FillWeight = 15 },
                 new DataGridViewCheckBoxColumn { Name = "InheritParent", HeaderText = "继承父行", FillWeight = 10 },
                 new DataGridViewTextBoxColumn { Name = "Priority", HeaderText = "优先级", FillWeight = 10 },
-                new DataGridViewCheckBoxColumn { Name = "Enabled", HeaderText = "启用", FillWeight = 8 }
+                new DataGridViewCheckBoxColumn { Name = "Enabled", HeaderText = "启用", FillWeight = 8 },
+                new DataGridViewTextBoxColumn { Name = "TimeAxisField", HeaderText = "时间轴字段", FillWeight = 12 },
+                new DataGridViewTextBoxColumn { Name = "Tolerance", HeaderText = "公差", FillWeight = 8 },
+                new DataGridViewTextBoxColumn { Name = "DefaultTime", HeaderText = "默认时间", FillWeight = 8 }
             });
 
             // ── Button Bar ────────────────────────────────────────────────────

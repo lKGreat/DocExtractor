@@ -37,7 +37,8 @@ namespace DocExtractor.Core.Pipeline
                 new MergedCellExpander(),
                 new MultiValueSplitter(),
                 new GroupConditionSplitter(),
-                new SubTableExpander()
+                new SubTableExpander(),
+                new TimeAxisSplitter()
             };
         }
 
@@ -189,7 +190,10 @@ namespace DocExtractor.Core.Pipeline
                     finalRecords = allRecords;
                 }
 
-                // 7. 如果有分组规则，按 __GroupKey__ 分组（用于后续分 Sheet 导出）
+                // 7. 时间轴排序：按原始行分组 + 时间轴升序
+                finalRecords = SortByTimeAxisIfPresent(finalRecords);
+
+                // 8. 如果有分组规则，按 __GroupKey__ 分组（用于后续分 Sheet 导出）
                 var groupRule = config.SplitRules
                     .FirstOrDefault(r => r.IsEnabled && r.Type == SplitType.GroupConditionSplit);
                 if (groupRule != null && !string.IsNullOrWhiteSpace(groupRule.GroupByColumn))
@@ -431,6 +435,25 @@ namespace DocExtractor.Core.Pipeline
                     return false;
             }
             return true;
+        }
+
+        private static List<ExtractedRecord> SortByTimeAxisIfPresent(List<ExtractedRecord> records)
+        {
+            bool hasTimeAxis = records.Any(r => r.Fields.ContainsKey("TimeAxis"));
+            if (!hasTimeAxis) return records;
+
+            return records
+                .OrderBy(r => r.SourceTableIndex)
+                .ThenBy(r => r.SourceRowIndex)
+                .ThenBy(r =>
+                {
+                    if (r.Fields.TryGetValue("TimeAxis", out var tv) &&
+                        double.TryParse(tv, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out double d))
+                        return d;
+                    return 0.0;
+                })
+                .ToList();
         }
 
         private static void Report(IProgress<PipelineProgress>? progress, string stage, string msg, int pct) =>

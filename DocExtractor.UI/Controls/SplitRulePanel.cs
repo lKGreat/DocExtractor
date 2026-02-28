@@ -38,7 +38,10 @@ namespace DocExtractor.UI.Controls
                     r.GroupByColumn,
                     r.InheritParentFields,
                     r.Priority.ToString(),
-                    r.IsEnabled);
+                    r.IsEnabled,
+                    r.TimeAxisFieldName ?? "TimeAxis",
+                    r.DefaultTolerance.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    r.DefaultTimeValue.ToString(System.Globalization.CultureInfo.InvariantCulture));
             }
         }
 
@@ -75,6 +78,16 @@ namespace DocExtractor.UI.Controls
             r.Delimiters = new List<string>(delimiters.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries));
 
             if (int.TryParse(row.Cells["Priority"].Value?.ToString(), out int pri)) r.Priority = pri;
+
+            r.TimeAxisFieldName = row.Cells["TimeAxisField"].Value?.ToString() ?? "TimeAxis";
+            if (double.TryParse(row.Cells["Tolerance"].Value?.ToString(),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double tol))
+                r.DefaultTolerance = tol;
+            if (double.TryParse(row.Cells["DefaultTime"].Value?.ToString(),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double dt))
+                r.DefaultTimeValue = dt;
 
             return r;
         }

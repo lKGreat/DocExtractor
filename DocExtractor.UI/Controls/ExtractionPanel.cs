@@ -285,9 +285,10 @@ namespace DocExtractor.UI.Controls
 
             AddFieldColumns(fields);
             AddGroupNameFallback(records, fields, out int groupNameColIdx);
+            AddTimeAxisFallback(records, fields, out int timeAxisColIdx);
 
             foreach (var r in records)
-                AddResultRow(r, fields, groupNameColIdx);
+                AddResultRow(r, fields, groupNameColIdx, timeAxisColIdx);
         }
 
         private void AddFieldColumns(IReadOnlyList<FieldDefinition> fields)
@@ -322,7 +323,28 @@ namespace DocExtractor.UI.Controls
             groupNameColIdx = 2;
         }
 
-        private void AddResultRow(ExtractedRecord r, IReadOnlyList<FieldDefinition> fields, int groupNameColIdx)
+        private void AddTimeAxisFallback(List<ExtractedRecord> records, IReadOnlyList<FieldDefinition> fields, out int timeAxisColIdx)
+        {
+            timeAxisColIdx = -1;
+            bool hasCol = fields.Any(f => f.FieldName == "TimeAxis");
+            bool hasData = records.Any(r => r.Fields.ContainsKey("TimeAxis") && !string.IsNullOrWhiteSpace(r.Fields["TimeAxis"]));
+            if (hasCol || !hasData) return;
+
+            var col = new DataGridViewTextBoxColumn { Name = "TimeAxis", HeaderText = "时间轴" };
+            StyleTimeAxisColumn(col);
+            _resultGrid.Columns.Add(col);
+            timeAxisColIdx = _resultGrid.Columns.Count - 1;
+        }
+
+        private void StyleTimeAxisColumn(DataGridViewTextBoxColumn col)
+        {
+            col.HeaderCell.Style.BackColor = Color.FromArgb(82, 196, 26);
+            col.HeaderCell.Style.ForeColor = Color.White;
+            col.DefaultCellStyle.BackColor = Color.FromArgb(237, 255, 230);
+            col.MinimumWidth = 80;
+        }
+
+        private void AddResultRow(ExtractedRecord r, IReadOnlyList<FieldDefinition> fields, int groupNameColIdx, int timeAxisColIdx)
         {
             var row = new DataGridViewRow();
             row.CreateCells(_resultGrid);
@@ -335,6 +357,9 @@ namespace DocExtractor.UI.Controls
 
             for (int i = 0; i < fields.Count; i++)
                 row.Cells[i + 2 + offset].Value = r.GetField(fields[i].FieldName);
+
+            if (timeAxisColIdx >= 0)
+                row.Cells[timeAxisColIdx].Value = r.GetField("TimeAxis");
 
             _resultGrid.Rows.Add(row);
         }

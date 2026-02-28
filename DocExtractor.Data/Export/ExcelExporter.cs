@@ -70,6 +70,10 @@ namespace DocExtractor.Data.Export
         private static readonly Color GroupNameHeaderColor = Color.FromArgb(0, 176, 240);
         // 组名数据行背景
         private static readonly Color GroupNameCellColor = Color.FromArgb(235, 250, 255);
+        // 时间轴表头颜色
+        private static readonly Color TimeAxisHeaderColor = Color.FromArgb(82, 196, 26);
+        // 时间轴数据行背景
+        private static readonly Color TimeAxisCellColor = Color.FromArgb(237, 255, 230);
 
         private void WriteSheet(
             ExcelWorksheet sheet,
@@ -82,8 +86,14 @@ namespace DocExtractor.Data.Export
                                                       !string.IsNullOrWhiteSpace(r.Fields["GroupName"]));
             bool appendGroupName = !hasGroupNameField && hasGroupNameData;
 
+            // 若配置字段中没有 TimeAxis，但记录中有注入值，则追加兜底列
+            bool hasTimeAxisField = fields.Any(f => f.FieldName == "TimeAxis");
+            bool hasTimeAxisData = records.Any(r => r.Fields.ContainsKey("TimeAxis") &&
+                                                     !string.IsNullOrWhiteSpace(r.Fields["TimeAxis"]));
+            bool appendTimeAxis = !hasTimeAxisField && hasTimeAxisData;
+
             // 确定最终列数
-            int totalCols = fields.Count + (appendGroupName ? 1 : 0);
+            int totalCols = fields.Count + (appendGroupName ? 1 : 0) + (appendTimeAxis ? 1 : 0);
             int col = 1;
 
             // 组名兜底列排在最前
@@ -111,6 +121,13 @@ namespace DocExtractor.Data.Export
                     cell.Style.Fill.BackgroundColor.SetColor(HeaderBlue);
                     cell.Style.Font.Color.SetColor(Color.White);
                 }
+                col++;
+            }
+
+            // 时间轴兜底列排在最后
+            if (appendTimeAxis)
+            {
+                WriteTimeAxisHeader(sheet.Cells[1, col]);
                 col++;
             }
 
@@ -142,6 +159,15 @@ namespace DocExtractor.Data.Export
                         cell.Style.Fill.PatternType = ExcelFillStyle.Solid;
                         cell.Style.Fill.BackgroundColor.SetColor(Color.FromArgb(255, 230, 230));
                     }
+                    col++;
+                }
+
+                // 兜底 TimeAxis 列
+                if (appendTimeAxis)
+                {
+                    var cell = sheet.Cells[r + 2, col];
+                    cell.Value = record.GetField("TimeAxis");
+                    ApplyTimeAxisCellStyle(cell);
                     col++;
                 }
             }
@@ -182,6 +208,21 @@ namespace DocExtractor.Data.Export
             cell.Style.Font.Bold = true;
             cell.Style.Fill.PatternType = ExcelFillStyle.Solid;
             cell.Style.Fill.BackgroundColor.SetColor(GroupNameCellColor);
+        }
+
+        private static void WriteTimeAxisHeader(ExcelRange cell)
+        {
+            cell.Value = "时间轴";
+            cell.Style.Font.Bold = true;
+            cell.Style.Fill.PatternType = ExcelFillStyle.Solid;
+            cell.Style.Fill.BackgroundColor.SetColor(TimeAxisHeaderColor);
+            cell.Style.Font.Color.SetColor(Color.White);
+        }
+
+        private static void ApplyTimeAxisCellStyle(ExcelRange cell)
+        {
+            cell.Style.Fill.PatternType = ExcelFillStyle.Solid;
+            cell.Style.Fill.BackgroundColor.SetColor(TimeAxisCellColor);
         }
 
         /// <summary>计算字符串显示宽度（中文字符算 2，其余算 1）</summary>
