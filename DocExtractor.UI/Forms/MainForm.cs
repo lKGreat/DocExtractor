@@ -340,6 +340,14 @@ namespace DocExtractor.UI.Forms
             var toExport = _lastResults.Where(r => r.IsComplete).ToList();
             if (toExport.Count == 0) return;
 
+            var selectedFieldNames = ShowExportFieldSelection(_currentConfig.Fields);
+            if (selectedFieldNames == null) return;
+            if (selectedFieldNames.Count == 0)
+            {
+                MessageHelper.Warn(this, "请至少选择一个导出字段");
+                return;
+            }
+
             using var dlg = new SaveFileDialog
             {
                 Filter = "Excel 文件|*.xlsx",
@@ -351,7 +359,7 @@ namespace DocExtractor.UI.Forms
                 try
                 {
                     var exporter = new ExcelExporter();
-                    exporter.Export(toExport, _currentConfig.Fields, dlg.FileName);
+                    exporter.Export(toExport, _currentConfig.Fields, dlg.FileName, selectedFieldNames);
                     AppendLog($"已导出到: {dlg.FileName}");
                     MessageHelper.Success(this, "导出成功！");
                 }
@@ -1251,6 +1259,82 @@ namespace DocExtractor.UI.Forms
             form.AcceptButton = okBtn;
             form.CancelButton = cancelBtn;
             return form.ShowDialog() == DialogResult.OK ? textBox.Text.Trim() : string.Empty;
+        }
+
+        private List<string>? ShowExportFieldSelection(IReadOnlyList<FieldDefinition> fields)
+        {
+            using var form = new Form
+            {
+                Text = "选择导出字段",
+                Width = 420,
+                Height = 520,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                StartPosition = FormStartPosition.CenterParent,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            var hint = new Label
+            {
+                Text = "勾选需要导出的字段（默认全选）",
+                Left = 12,
+                Top = 12,
+                Width = 380
+            };
+
+            var checkedList = new CheckedListBox
+            {
+                Left = 12,
+                Top = 36,
+                Width = 380,
+                Height = 380,
+                CheckOnClick = true
+            };
+
+            foreach (var field in fields)
+            {
+                string display = string.IsNullOrWhiteSpace(field.DisplayName)
+                    ? field.FieldName
+                    : $"{field.DisplayName} ({field.FieldName})";
+                checkedList.Items.Add(display, true);
+            }
+
+            var selectAllBtn = new Button { Text = "全选", Left = 12, Top = 428, Width = 80 };
+            var clearAllBtn = new Button { Text = "全不选", Left = 100, Top = 428, Width = 80 };
+            var okBtn = new Button { Text = "确定", DialogResult = DialogResult.OK, Left = 236, Top = 460, Width = 75 };
+            var cancelBtn = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Left = 317, Top = 460, Width = 75 };
+
+            selectAllBtn.Click += (_, _) =>
+            {
+                for (int i = 0; i < checkedList.Items.Count; i++)
+                    checkedList.SetItemChecked(i, true);
+            };
+            clearAllBtn.Click += (_, _) =>
+            {
+                for (int i = 0; i < checkedList.Items.Count; i++)
+                    checkedList.SetItemChecked(i, false);
+            };
+
+            form.Controls.Add(hint);
+            form.Controls.Add(checkedList);
+            form.Controls.Add(selectAllBtn);
+            form.Controls.Add(clearAllBtn);
+            form.Controls.Add(okBtn);
+            form.Controls.Add(cancelBtn);
+            form.AcceptButton = okBtn;
+            form.CancelButton = cancelBtn;
+
+            if (form.ShowDialog() != DialogResult.OK)
+                return null;
+
+            var selected = new List<string>();
+            for (int i = 0; i < checkedList.Items.Count; i++)
+            {
+                if (checkedList.GetItemChecked(i))
+                    selected.Add(fields[i].FieldName);
+            }
+
+            return selected;
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)

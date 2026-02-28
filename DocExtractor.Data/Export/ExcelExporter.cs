@@ -24,9 +24,19 @@ namespace DocExtractor.Data.Export
         public void Export(
             IReadOnlyList<ExtractedRecord> records,
             IReadOnlyList<FieldDefinition> fields,
-            string outputPath)
+            string outputPath,
+            IReadOnlyList<string>? selectedFieldNames = null)
         {
             using var package = new ExcelPackage();
+
+            IReadOnlyList<FieldDefinition> exportFields = fields;
+            if (selectedFieldNames != null && selectedFieldNames.Count > 0)
+            {
+                var selected = new HashSet<string>(selectedFieldNames);
+                var filtered = fields.Where(f => selected.Contains(f.FieldName)).ToList();
+                if (filtered.Count > 0)
+                    exportFields = filtered;
+            }
 
             // 按来源文件分组，每个文件一个Sheet
             var grouped = records
@@ -40,14 +50,14 @@ namespace DocExtractor.Data.Export
             {
                 string sheetName = SanitizeSheetName(group.Key);
                 var sheet = package.Workbook.Worksheets.Add(sheetName);
-                WriteSheet(sheet, group.ToList(), fields);
+                WriteSheet(sheet, group.ToList(), exportFields);
             }
 
             // 总表
             if (grouped.Count > 1)
             {
                 var allSheet = package.Workbook.Worksheets.Add("全部数据");
-                WriteSheet(allSheet, records.ToList(), fields);
+                WriteSheet(allSheet, records.ToList(), exportFields);
             }
 
             var fi = new FileInfo(outputPath);
