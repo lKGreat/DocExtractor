@@ -8,6 +8,17 @@ using DocExtractor.ML.EntityExtractor;
 
 namespace DocExtractor.Data.Repositories
 {
+    /// <summary>章节标题标注数据</summary>
+    public class SectionAnnotation
+    {
+        public string ParagraphText { get; set; } = string.Empty;
+        public bool IsHeading { get; set; }
+        public bool IsBold { get; set; }
+        public float FontSize { get; set; }
+        public bool HasHeadingStyle { get; set; }
+        public int OutlineLevel { get; set; } = 9;
+    }
+
     /// <summary>
     /// 训练数据仓储：管理列名和NER的训练样本持久化
     /// </summary>
@@ -104,6 +115,89 @@ namespace DocExtractor.Data.Repositories
         public int GetNerSampleCount() =>
             (int)(long)new SQLiteCommand(
                 "SELECT COUNT(*) FROM NerTrainingData", _conn).ExecuteScalar()!;
+
+        // ── 章节标题训练数据 ──────────────────────────────────────────────────
+
+        /// <summary>
+        /// 添加章节标题标注样本
+        /// </summary>
+        /// <param name="paragraphText">段落文本</param>
+        /// <param name="isHeading">是否为章节标题</param>
+        /// <param name="isBold">是否加粗</param>
+        /// <param name="fontSize">字号（半磅）</param>
+        /// <param name="hasHeadingStyle">是否有标题样式</param>
+        /// <param name="outlineLevel">大纲级别</param>
+        /// <param name="source">来源文件</param>
+        public void AddSectionSample(
+            string paragraphText,
+            bool isHeading,
+            bool isBold,
+            float fontSize,
+            bool hasHeadingStyle,
+            int outlineLevel,
+            string? source = null)
+        {
+            EnsureSectionTable();
+            using var cmd = new SQLiteCommand(
+                "INSERT INTO SectionTrainingData (ParagraphText, IsHeading, IsBold, FontSize, HasHeadingStyle, OutlineLevel, Source) " +
+                "VALUES (@t, @h, @b, @fs, @hs, @ol, @s)", _conn);
+            cmd.Parameters.AddWithValue("@t", paragraphText);
+            cmd.Parameters.AddWithValue("@h", isHeading ? 1 : 0);
+            cmd.Parameters.AddWithValue("@b", isBold ? 1 : 0);
+            cmd.Parameters.AddWithValue("@fs", fontSize);
+            cmd.Parameters.AddWithValue("@hs", hasHeadingStyle ? 1 : 0);
+            cmd.Parameters.AddWithValue("@ol", outlineLevel);
+            cmd.Parameters.AddWithValue("@s", source ?? (object)DBNull.Value);
+            cmd.ExecuteNonQuery();
+        }
+
+        public List<SectionAnnotation> GetSectionSamples()
+        {
+            EnsureSectionTable();
+            using var cmd = new SQLiteCommand(
+                "SELECT ParagraphText, IsHeading, IsBold, FontSize, HasHeadingStyle, OutlineLevel FROM SectionTrainingData",
+                _conn);
+            using var reader = cmd.ExecuteReader();
+
+            var result = new List<SectionAnnotation>();
+            while (reader.Read())
+            {
+                result.Add(new SectionAnnotation
+                {
+                    ParagraphText = reader.GetString(0),
+                    IsHeading = reader.GetInt32(1) == 1,
+                    IsBold = reader.GetInt32(2) == 1,
+                    FontSize = reader.IsDBNull(3) ? 0f : (float)reader.GetDouble(3),
+                    HasHeadingStyle = reader.GetInt32(4) == 1,
+                    OutlineLevel = reader.IsDBNull(5) ? 9 : reader.GetInt32(5)
+                });
+            }
+            return result;
+        }
+
+        public int GetSectionSampleCount()
+        {
+            EnsureSectionTable();
+            return (int)(long)new SQLiteCommand(
+                "SELECT COUNT(*) FROM SectionTrainingData", _conn).ExecuteScalar()!;
+        }
+
+        private void EnsureSectionTable()
+        {
+            using var cmd = new SQLiteCommand(@"
+CREATE TABLE IF NOT EXISTS SectionTrainingData (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ParagraphText TEXT NOT NULL,
+    IsHeading INTEGER NOT NULL DEFAULT 0,
+    IsBold INTEGER NOT NULL DEFAULT 0,
+    FontSize REAL NOT NULL DEFAULT 0,
+    HasHeadingStyle INTEGER NOT NULL DEFAULT 0,
+    OutlineLevel INTEGER NOT NULL DEFAULT 9,
+    Source TEXT,
+    CreatedAt TEXT DEFAULT (datetime('now'))
+);", _conn);
+            cmd.ExecuteNonQuery();
+        }
 
         public void Dispose() => _conn.Dispose();
 

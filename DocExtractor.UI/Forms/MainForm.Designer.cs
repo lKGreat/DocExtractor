@@ -287,15 +287,18 @@ namespace DocExtractor.UI.Forms
             var statsFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(8) };
             _colSampleCountLabel = new Label { Text = "列名分类样本：0 条", Width = 220, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
             _nerSampleCountLabel = new Label { Text = "NER 标注样本：0 条", Width = 220, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
-            statsFlow.Controls.AddRange(new Control[] { _colSampleCountLabel, _nerSampleCountLabel });
+            _sectionSampleCountLabel = new Label { Text = "章节标题样本：0 条", Width = 220, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
+            statsFlow.Controls.AddRange(new Control[] { _colSampleCountLabel, _nerSampleCountLabel, _sectionSampleCountLabel });
             statsGroup.Controls.Add(statsFlow);
 
             // 训练按钮
             var trainBtnFlow = new FlowLayoutPanel { Dock = DockStyle.Fill };
             _trainColumnBtn = new AntdUI.Button { Text = "训练列名分类器", Type = AntdUI.TTypeMini.Primary, Size = new Size(150, 36) };
             _trainNerBtn = new AntdUI.Button { Text = "训练 NER 模型", Type = AntdUI.TTypeMini.Primary, Size = new Size(140, 36) };
+            _trainSectionBtn = new AntdUI.Button { Text = "训练章节标题分类器", Type = AntdUI.TTypeMini.Primary, Size = new Size(170, 36) };
             _importCsvBtn = new AntdUI.Button { Text = "导入 CSV/Excel 标注", Size = new Size(160, 36) };
-            trainBtnFlow.Controls.AddRange(new Control[] { _trainColumnBtn, _trainNerBtn, _importCsvBtn });
+            _importSectionWordBtn = new AntdUI.Button { Text = "从 Word 导入章节标注", Size = new Size(170, 36) };
+            trainBtnFlow.Controls.AddRange(new Control[] { _trainColumnBtn, _trainNerBtn, _trainSectionBtn, _importCsvBtn, _importSectionWordBtn });
 
             // 评估结果
             _evalLabel = new Label
@@ -389,9 +392,12 @@ namespace DocExtractor.UI.Forms
         // Tab 4：模型训练
         private Label _colSampleCountLabel;
         private Label _nerSampleCountLabel;
+        private Label _sectionSampleCountLabel;
         private AntdUI.Button _trainColumnBtn;
         private AntdUI.Button _trainNerBtn;
+        private AntdUI.Button _trainSectionBtn;
         private AntdUI.Button _importCsvBtn;
+        private AntdUI.Button _importSectionWordBtn;
         private Label _evalLabel;
         private ProgressBar _trainProgressBar;
         private RichTextBox _trainLogBox;

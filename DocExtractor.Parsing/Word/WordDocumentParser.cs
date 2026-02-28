@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using DocExtractor.Core.Interfaces;
@@ -11,9 +12,22 @@ namespace DocExtractor.Parsing.Word
     /// <summary>
     /// Word (.docx) 文档解析器
     /// 提取文档中所有表格，处理合并单元格（GridSpan + VMerge）
+    /// 同时按顺序遍历 Body 子元素，追踪章节标题并将其记录到 RawTable.SectionHeading
     /// </summary>
     public class WordDocumentParser : IDocumentParser
     {
+        private readonly ISectionHeadingDetector _headingDetector;
+
+        /// <param name="headingDetector">
+        /// 章节标题检测器。
+        /// 不传时使用内置纯规则引擎；
+        /// 可注入 HybridSectionHeadingDetector（规则 + ML 三层级联）。
+        /// </param>
+        public WordDocumentParser(ISectionHeadingDetector? headingDetector = null)
+        {
+            _headingDetector = headingDetector ?? new SectionHeadingDetector();
+        }
+
         public bool CanHandle(string fileExtension) =>
             fileExtension.ToLower() is ".docx" or ".doc";
 
@@ -25,12 +39,51 @@ namespace DocExtractor.Parsing.Word
             var body = doc.MainDocumentPart?.Document?.Body;
             if (body == null) return result;
 
+            // 统计 Body 总子元素数（用于计算相对位置）
+            int totalElements = body.ChildElements.Count;
+            int elementIndex = 0;
+
+            // 按文档顺序遍历 Body 直接子元素，同时追踪当前章节标题
+            string? currentSectionHeading = null;
+            string? currentSectionNumber = null;
             int tableIndex = 0;
-            foreach (var table in body.Descendants<Table>())
+
+            foreach (OpenXmlElement element in body.ChildElements)
             {
-                var rawTable = ParseTable(table, filePath, tableIndex++);
-                if (!rawTable.IsEmpty)
-                    result.Add(rawTable);
+                float position = totalElements > 0 ? (float)elementIndex / totalElements : 0f;
+                elementIndex++;
+
+                if (element is Paragraph para)
+                {
+                    // 提取段落格式特征（OpenXML 层）
+                    var features = ParagraphFeatureExtractor.Extract(para);
+                    string paraText = ParagraphFeatureExtractor.ExtractText(para);
+
+                    // 通过接口检测（规则层 or 混合层）
+                    var heading = _headingDetector.Detect(
+                        paraText,
+                        features.IsBold,
+                        features.FontSize,
+                        features.HasHeadingStyle,
+                        features.OutlineLevel,
+                        position);
+
+                    if (heading != null)
+                    {
+                        currentSectionHeading = heading.FullText;
+                        currentSectionNumber = heading.Number;
+                    }
+                }
+                else if (element is Table table)
+                {
+                    var rawTable = ParseTable(table, filePath, tableIndex++);
+                    if (!rawTable.IsEmpty)
+                    {
+                        rawTable.SectionHeading = currentSectionHeading;
+                        rawTable.SectionNumber = currentSectionNumber;
+                        result.Add(rawTable);
+                    }
+                }
             }
 
             return result;
@@ -52,7 +105,7 @@ namespace DocExtractor.Parsing.Word
                 for (int c = 0; c < colCount; c++)
                 {
                     var cell = grid[r, c];
-                    if (!cell.IsMaster) continue; // 影子格由 builder.SetCell 内部标记
+                    if (!cell.IsMaster) continue;
 
                     string normalized = CellValueNormalizer.Normalize(cell.Text);
                     builder.SetCell(r, c, normalized, cell.RowSpan, cell.ColSpan);
@@ -61,15 +114,14 @@ namespace DocExtractor.Parsing.Word
 
             var rawTable = builder.Build(sourceFile, tableIndex);
 
-            // 尝试提取表格标题（表格前一个段落）
+            // 表格标题（表格紧邻的上一段落，通常是"表 X.X-X ..."这类说明行）
             rawTable.Title = TryGetTableTitle(table);
 
             return rawTable;
         }
 
-        private string? TryGetTableTitle(Table table)
+        private static string? TryGetTableTitle(Table table)
         {
-            // Word 中表格前的段落通常是表格标题
             var prev = table.PreviousSibling<Paragraph>();
             if (prev == null) return null;
 

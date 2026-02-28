@@ -13,6 +13,7 @@ using DocExtractor.Data.Repositories;
 using DocExtractor.ML.ColumnClassifier;
 using DocExtractor.ML.EntityExtractor;
 using DocExtractor.ML.Inference;
+using DocExtractor.ML.SectionClassifier;
 using DocExtractor.Parsing.Excel;
 using DocExtractor.Parsing.Word;
 using DocExtractor.UI.Helpers;
@@ -31,6 +32,7 @@ namespace DocExtractor.UI.Forms
         private readonly string _modelsDir;
         private ColumnClassifierModel _columnModel;
         private NerModel _nerModel;
+        private SectionClassifierModel _sectionModel;
         private ExtractionConfigRepository _configRepo;
         private List<(int Id, string Name)> _configItems = new List<(int, string)>();
         private int _currentConfigId = -1;
@@ -44,6 +46,7 @@ namespace DocExtractor.UI.Forms
 
             _columnModel = new ColumnClassifierModel();
             _nerModel = new NerModel();
+            _sectionModel = new SectionClassifierModel();
             TryLoadModels();
 
             _configRepo = new ExtractionConfigRepository(_dbPath);
@@ -96,7 +99,9 @@ namespace DocExtractor.UI.Forms
             // Tab 4：模型训练
             _trainColumnBtn.Click += OnTrainColumnClassifier;
             _trainNerBtn.Click += OnTrainNer;
+            _trainSectionBtn.Click += OnTrainSectionClassifier;
             _importCsvBtn.Click += OnImportTrainingData;
+            _importSectionWordBtn.Click += OnImportSectionFromWord;
         }
 
         // ── Tab 1：数据抽取事件 ───────────────────────────────────────────────
@@ -151,9 +156,12 @@ namespace DocExtractor.UI.Forms
                 var results = await Task.Run(() =>
                 {
                     var normalizer = new HybridColumnNormalizer(_columnModel, config.ColumnMatch);
+                    // 构建混合章节标题检测器（规则 + ML 三层级联）
+                    var ruleDetector = new SectionHeadingDetector();
+                    var hybridHeadingDetector = new HybridSectionHeadingDetector(ruleDetector, _sectionModel);
                     var parsers = new IDocumentParser[]
                     {
-                        new WordDocumentParser(),
+                        new WordDocumentParser(hybridHeadingDetector),
                         new ExcelDocumentParser(config.HeaderRowCount, config.TargetSheets)
                     };
                     var pipeline = new ExtractionPipeline(parsers, normalizer, _nerModel);
@@ -493,6 +501,114 @@ namespace DocExtractor.UI.Forms
             }
         }
 
+        private async void OnTrainSectionClassifier(object sender, EventArgs e)
+        {
+            _trainSectionBtn.Enabled = false;
+            _trainProgressBar.Style = ProgressBarStyle.Marquee;
+            AppendTrainLog("开始训练章节标题分类器...");
+
+            try
+            {
+                List<DocExtractor.Data.Repositories.SectionAnnotation> samples;
+                using (var repo = new TrainingDataRepository(_dbPath))
+                    samples = repo.GetSectionSamples();
+
+                if (samples.Count < 20)
+                {
+                    MessageHelper.Warn(this,
+                        $"章节标题样本不足（当前 {samples.Count} 条，至少需要 20 条）。\n" +
+                        "请先通过「从 Word 导入章节标注」按钮导入标注数据。");
+                    return;
+                }
+
+                var inputs = samples.ConvertAll(s => new SectionInput
+                {
+                    Text = s.ParagraphText,
+                    IsBold = s.IsBold ? 1f : 0f,
+                    FontSize = s.FontSize,
+                    HasNumberPrefix = s.ParagraphText.Length > 0 && char.IsDigit(s.ParagraphText[0]) ? 1f : 0f,
+                    TextLength = s.ParagraphText.Length,
+                    HasHeadingStyle = s.HasHeadingStyle ? 1f : 0f,
+                    Position = 0f,   // 导入时不保留位置，训练时设为0
+                    IsHeading = s.IsHeading
+                });
+
+                var progress = new Progress<string>(msg => AppendTrainLog(msg));
+                var trainer = new SectionClassifierTrainer();
+                string modelPath = Path.Combine(_modelsDir, "section_classifier.zip");
+
+                var eval = await Task.Run(() => trainer.Train(inputs, modelPath, progress));
+
+                _sectionModel.Reload(modelPath);
+                _evalLabel.Text = $"章节标题分类器：{eval}";
+                AppendTrainLog($"\n章节标题分类器训练完成！\n{eval}");
+                MessageHelper.Success(this, "章节标题分类器训练完成！");
+            }
+            catch (Exception ex)
+            {
+                AppendTrainLog($"\n训练失败: {ex.Message}");
+                MessageHelper.Error(this, $"训练失败：{ex.Message}");
+            }
+            finally
+            {
+                _trainSectionBtn.Enabled = true;
+                _trainProgressBar.Style = ProgressBarStyle.Continuous;
+                RefreshTrainingStats();
+            }
+        }
+
+        private void OnImportSectionFromWord(object sender, EventArgs e)
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Filter = "Word 文档|*.docx",
+                Title = "选择用于章节标题标注的 Word 文档（支持多选）",
+                Multiselect = true
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+
+            int imported = 0;
+
+            try
+            {
+                var scanner = new WordParagraphScanner();
+                using var repo = new TrainingDataRepository(_dbPath);
+
+                foreach (var filePath in dlg.FileNames)
+                {
+                    var paragraphs = scanner.Scan(filePath);
+
+                    foreach (var p in paragraphs)
+                    {
+                        repo.AddSectionSample(
+                            p.Text,
+                            p.AutoIsHeading,
+                            p.IsBold,
+                            p.FontSize,
+                            p.HasHeadingStyle,
+                            p.OutlineLevel,
+                            filePath);
+                        imported++;
+                    }
+
+                    AppendTrainLog($"  {Path.GetFileName(filePath)}：扫描 {paragraphs.Count} 个段落");
+                }
+
+                RefreshTrainingStats();
+                AppendTrainLog(
+                    $"\n共导入 {imported} 条段落（规则置信度≥0.85自动标记为章节标题，其余为普通段落）\n" +
+                    "如需修正标注，可编辑数据库 SectionTrainingData 表的 IsHeading 字段");
+                MessageHelper.Success(this,
+                    $"已从 {dlg.FileNames.Length} 个文件导入 {imported} 条段落。\n" +
+                    "规则置信度≥0.85的段落自动标记为章节标题，其余标记为普通段落。\n" +
+                    "积累足够样本（≥20条）后可点击「训练章节标题分类器」。");
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"导入失败：{ex.Message}");
+            }
+        }
+
         // ── 菜单事件 ──────────────────────────────────────────────────────────
 
         private void OnOpenTemplateDir()
@@ -676,6 +792,7 @@ namespace DocExtractor.UI.Forms
                 using var repo = new TrainingDataRepository(_dbPath);
                 _colSampleCountLabel.Text = $"列名分类样本：{repo.GetColumnSampleCount()} 条";
                 _nerSampleCountLabel.Text = $"NER 标注样本：{repo.GetNerSampleCount()} 条";
+                _sectionSampleCountLabel.Text = $"章节标题样本：{repo.GetSectionSampleCount()} 条";
             }
             catch { }
         }
@@ -684,10 +801,13 @@ namespace DocExtractor.UI.Forms
         {
             string colModelPath = Path.Combine(_modelsDir, "column_classifier.zip");
             string nerModelPath = Path.Combine(_modelsDir, "ner_model.zip");
+            string sectionModelPath = Path.Combine(_modelsDir, "section_classifier.zip");
 
             try { if (File.Exists(colModelPath)) _columnModel.Load(colModelPath); }
             catch { }
             try { if (File.Exists(nerModelPath)) _nerModel.Load(nerModelPath); }
+            catch { }
+            try { if (File.Exists(sectionModelPath)) _sectionModel.Load(sectionModelPath); }
             catch { }
         }
 

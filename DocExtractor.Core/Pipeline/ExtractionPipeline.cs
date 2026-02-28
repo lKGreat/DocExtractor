@@ -232,6 +232,10 @@ namespace DocExtractor.Core.Pipeline
                     SourceRowIndex = r
                 };
 
+                // 注入章节标题（组名），优先于列映射填充
+                if (!string.IsNullOrWhiteSpace(table.SectionHeading))
+                    record.Fields["GroupName"] = table.SectionHeading!;
+
                 // 按列映射填充字段
                 for (int c = 0; c < table.ColCount; c++)
                 {

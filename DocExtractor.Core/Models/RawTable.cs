@@ -20,6 +20,12 @@ namespace DocExtractor.Core.Models
         /// <summary>Sheet 名称（Excel 专用）</summary>
         public string? SheetName { get; set; }
 
+        /// <summary>表格所属的章节标题（如"2.1 遥测功能测试"）</summary>
+        public string? SectionHeading { get; set; }
+
+        /// <summary>章节编号（如"2.1"）</summary>
+        public string? SectionNumber { get; set; }
+
         /// <summary>行数</summary>
         public int RowCount { get; set; }
 

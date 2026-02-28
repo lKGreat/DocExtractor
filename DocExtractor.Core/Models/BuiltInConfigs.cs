@@ -161,6 +161,14 @@ namespace DocExtractor.Core.Models
             ColumnMatch = ColumnMatchMode.HybridRuleFirst,
             Fields = new List<FieldDefinition>
             {
+                new FieldDefinition
+                {
+                    FieldName = "GroupName",
+                    DisplayName = "组名",
+                    KnownColumnVariants = new List<string>(),  // 不从表格列匹配，由 Pipeline 注入
+                    IsRequired = false,
+                    DefaultValue = null
+                },
                 new FieldDefinition { FieldName = "Index", DisplayName = "序号", DataType = FieldDataType.Integer,
                     KnownColumnVariants = new List<string> { "序号", "No.", "编号" } },
                 new FieldDefinition { FieldName = "ItemName", DisplayName = "名称",
