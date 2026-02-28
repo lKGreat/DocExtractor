@@ -422,7 +422,7 @@ namespace DocExtractor.UI.Forms
                 RowCount = 6,
                 ColumnCount = 1
             };
-            trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));   // 统计
+            trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 160));  // 统计
             trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 130));  // 训练参数
             trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));   // 操作按钮
             trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 55));   // 结果对比
