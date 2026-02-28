@@ -164,6 +164,7 @@ namespace DocExtractor.UI.Forms
             _deleteConfigBtn.Click += OnDeleteConfig;
             _importConfigBtn.Click += OnImportConfig;
             _exportConfigBtn.Click += OnExportConfig;
+            _fieldsGrid.CellContentClick += OnFieldsGridCellContentClick;
 
             // Tab 3：拆分规则
             _saveSplitBtn.Click += OnSaveSplitRules;
@@ -594,6 +595,47 @@ namespace DocExtractor.UI.Forms
 
                 _currentConfig.Fields.Add(f);
             }
+        }
+
+        private void OnFieldsGridCellContentClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            if (_fieldsGrid.Columns[e.ColumnIndex].Name != "EditField") return;
+
+            var row = _fieldsGrid.Rows[e.RowIndex];
+            if (row.IsNewRow) return;
+
+            var fieldName = row.Cells["FieldName"].Value?.ToString();
+            if (string.IsNullOrWhiteSpace(fieldName)) return;
+
+            var field = new FieldDefinition
+            {
+                FieldName = fieldName,
+                DisplayName = row.Cells["DisplayName"].Value?.ToString() ?? fieldName,
+                IsRequired = row.Cells["IsRequired"].Value is true,
+                DefaultValue = row.Cells["DefaultValue"].Value?.ToString() ?? string.Empty
+            };
+
+            if (Enum.TryParse<FieldDataType>(row.Cells["DataType"].Value?.ToString(), out var dt))
+                field.DataType = dt;
+
+            var variants = row.Cells["Variants"].Value?.ToString() ?? string.Empty;
+            field.KnownColumnVariants = new List<string>(
+                variants.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(v => v.Trim())
+                    .Where(v => !string.IsNullOrWhiteSpace(v)));
+
+            using var editor = new FieldEditorForm(field);
+            if (editor.ShowDialog(this) != DialogResult.OK || editor.EditedField == null)
+                return;
+
+            var edited = editor.EditedField;
+            row.Cells["FieldName"].Value = edited.FieldName;
+            row.Cells["DisplayName"].Value = edited.DisplayName;
+            row.Cells["DataType"].Value = edited.DataType.ToString();
+            row.Cells["IsRequired"].Value = edited.IsRequired;
+            row.Cells["DefaultValue"].Value = edited.DefaultValue ?? string.Empty;
+            row.Cells["Variants"].Value = string.Join(",", edited.KnownColumnVariants);
         }
 
         private void SaveGlobalSettings()

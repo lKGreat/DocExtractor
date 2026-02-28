@@ -323,7 +323,15 @@ namespace DocExtractor.UI.Forms
                 },
                 new DataGridViewCheckBoxColumn { Name = "IsRequired", HeaderText = "必填", FillWeight = 6 },
                 new DataGridViewTextBoxColumn { Name = "DefaultValue", HeaderText = "默认值", FillWeight = 12 },
-                new DataGridViewTextBoxColumn { Name = "Variants", HeaderText = "列名变体（逗号分隔）", FillWeight = 40 }
+                new DataGridViewTextBoxColumn { Name = "Variants", HeaderText = "列名变体（逗号分隔）", FillWeight = 35 },
+                new DataGridViewButtonColumn
+                {
+                    Name = "EditField",
+                    HeaderText = "编辑",
+                    Text = "编辑",
+                    UseColumnTextForButtonValue = true,
+                    FillWeight = 8
+                }
             });
 
             // 下：全局设置
