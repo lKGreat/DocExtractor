@@ -44,6 +44,14 @@ namespace DocExtractor.Core.Normalization
 
             options ??= new ValueNormalizationOptions();
 
+            if (options.EnableValueCleaning)
+            {
+                var rules = options.GetEffectiveCleaningRules();
+                input = ValueCleaningEngine.Clean(input, rules);
+                if (input.Length == 0)
+                    return string.Empty;
+            }
+
             return field.DataType switch
             {
                 FieldDataType.Integer => NormalizeInteger(input),

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using DocExtractor.Core.Normalization;
 
 namespace DocExtractor.Core.Models
 {
@@ -29,5 +30,23 @@ namespace DocExtractor.Core.Models
 
         /// <summary>十六进制是否大写</summary>
         public bool HexUpperCase { get; set; } = true;
+
+        /// <summary>是否启用值清洗（去除单位/注释/描述等）</summary>
+        public bool EnableValueCleaning { get; set; }
+
+        /// <summary>
+        /// 值清洗规则列表。为空时使用默认规则集。
+        /// </summary>
+        public List<ValueCleaningRule> CleaningRules { get; set; } = new List<ValueCleaningRule>();
+
+        /// <summary>
+        /// 获取生效的清洗规则：若自定义列表非空则使用它，否则使用默认规则集。
+        /// </summary>
+        public List<ValueCleaningRule> GetEffectiveCleaningRules()
+        {
+            return CleaningRules != null && CleaningRules.Count > 0
+                ? CleaningRules
+                : ValueCleaningRule.GetDefaultRules();
+        }
     }
 }

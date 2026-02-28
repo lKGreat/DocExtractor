@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows.Forms;
 using Microsoft.Extensions.Logging;
 using DocExtractor.Core.Models;
+using DocExtractor.Core.Normalization;
 using DocExtractor.Data.Export;
 using DocExtractor.UI.Context;
 using DocExtractor.UI.Forms;
@@ -45,6 +46,8 @@ namespace DocExtractor.UI.Controls
             _importConfigBtn.Click += OnImportConfig;
             _exportConfigBtn.Click += OnExportConfig;
             _fieldsGrid.CellContentClick += OnFieldsGridCellClick;
+            _valueCleaningCheckBox.CheckedChanged += OnValueCleaningToggled;
+            _cleaningRulesBtn.Click += OnOpenCleaningRules;
         }
 
         // ── Grid Loading ──────────────────────────────────────────────────────
@@ -74,6 +77,10 @@ namespace DocExtractor.UI.Controls
                 .FirstOrDefault(x => x == _ctx.CurrentConfig.ColumnMatch.ToString());
             if (matchItem != null) _columnMatchCombo.SelectedItem = matchItem;
             _valueNormalizationCheckBox.Checked = _ctx.CurrentConfig.EnableValueNormalization;
+
+            var opts = _ctx.CurrentConfig.NormalizationOptions;
+            _valueCleaningCheckBox.Checked = opts?.EnableValueCleaning ?? false;
+            _cleaningRulesBtn.Enabled = _valueCleaningCheckBox.Checked;
         }
 
         private void UpdateConfigTypeBadge()
@@ -132,6 +139,31 @@ namespace DocExtractor.UI.Controls
             row.Cells["IsRequired"].Value = field.IsRequired;
             row.Cells["DefaultValue"].Value = field.DefaultValue ?? string.Empty;
             row.Cells["Variants"].Value = string.Join(",", field.KnownColumnVariants);
+        }
+
+        // ── Value Cleaning ────────────────────────────────────────────────────
+
+        private void OnValueCleaningToggled(object sender, EventArgs e)
+        {
+            _cleaningRulesBtn.Enabled = _valueCleaningCheckBox.Checked;
+        }
+
+        private void OnOpenCleaningRules(object sender, EventArgs e)
+        {
+            EnsureNormalizationOptions();
+            var opts = _ctx.CurrentConfig.NormalizationOptions;
+            var rules = opts.GetEffectiveCleaningRules();
+
+            using var dlg = new ValueCleaningRulesForm(rules);
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+            opts.CleaningRules = dlg.ResultRules;
+        }
+
+        private void EnsureNormalizationOptions()
+        {
+            if (_ctx.CurrentConfig.NormalizationOptions == null)
+                _ctx.CurrentConfig.NormalizationOptions = new ValueNormalizationOptions();
         }
 
         // ── Config CRUD ───────────────────────────────────────────────────────
@@ -256,6 +288,9 @@ namespace DocExtractor.UI.Controls
             if (Enum.TryParse<ColumnMatchMode>(_columnMatchCombo.SelectedItem?.ToString(), out var cm))
                 _ctx.CurrentConfig.ColumnMatch = cm;
             _ctx.CurrentConfig.EnableValueNormalization = _valueNormalizationCheckBox.Checked;
+
+            EnsureNormalizationOptions();
+            _ctx.CurrentConfig.NormalizationOptions.EnableValueCleaning = _valueCleaningCheckBox.Checked;
         }
     }
 }

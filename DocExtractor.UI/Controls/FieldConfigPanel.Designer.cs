@@ -27,6 +27,8 @@ namespace DocExtractor.UI.Controls
             this._headerRowsSpinner = new NumericUpDown();
             this._columnMatchCombo = new ComboBox();
             this._valueNormalizationCheckBox = new CheckBox();
+            this._valueCleaningCheckBox = new CheckBox();
+            this._cleaningRulesBtn = new AntdUI.Button();
             this._btnBar = new FlowLayoutPanel();
             this._saveConfigBtn = new AntdUI.Button();
             this._setDefaultBtn = new AntdUI.Button();
@@ -96,8 +98,9 @@ namespace DocExtractor.UI.Controls
             // ── Global Settings ───────────────────────────────────────────────
             this._settingsPanel.Dock = DockStyle.Fill;
             this._settingsPanel.ColumnCount = 4;
-            this._settingsPanel.RowCount = 2;
+            this._settingsPanel.RowCount = 3;
             this._settingsPanel.Padding = new Padding(8);
+            this._settingsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             this._settingsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             this._settingsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
 
@@ -114,12 +117,23 @@ namespace DocExtractor.UI.Controls
             this._valueNormalizationCheckBox.Checked = true;
             this._valueNormalizationCheckBox.AutoSize = true;
 
+            this._valueCleaningCheckBox.Text = "启用值清洗（去除单位/注释/描述）";
+            this._valueCleaningCheckBox.Checked = false;
+            this._valueCleaningCheckBox.AutoSize = true;
+
+            this._cleaningRulesBtn.Text = "配置清洗规则...";
+            this._cleaningRulesBtn.Size = new Size(130, 28);
+            this._cleaningRulesBtn.Enabled = false;
+
             this._settingsPanel.Controls.Add(new Label { Text = "表头行数：", TextAlign = System.Drawing.ContentAlignment.MiddleRight, Width = 80 }, 0, 0);
             this._settingsPanel.Controls.Add(this._headerRowsSpinner, 1, 0);
             this._settingsPanel.Controls.Add(new Label { Text = "列名匹配：", TextAlign = System.Drawing.ContentAlignment.MiddleRight, Width = 80 }, 2, 0);
             this._settingsPanel.Controls.Add(this._columnMatchCombo, 3, 0);
             this._settingsPanel.Controls.Add(this._valueNormalizationCheckBox, 0, 1);
             this._settingsPanel.SetColumnSpan(this._valueNormalizationCheckBox, 4);
+            this._settingsPanel.Controls.Add(this._valueCleaningCheckBox, 0, 2);
+            this._settingsPanel.SetColumnSpan(this._valueCleaningCheckBox, 2);
+            this._settingsPanel.Controls.Add(this._cleaningRulesBtn, 2, 2);
             this._configSplit.Panel2.Controls.Add(this._settingsPanel);
 
             // ── Button Bar ────────────────────────────────────────────────────
@@ -171,6 +185,8 @@ namespace DocExtractor.UI.Controls
         private NumericUpDown _headerRowsSpinner;
         private ComboBox _columnMatchCombo;
         private CheckBox _valueNormalizationCheckBox;
+        private CheckBox _valueCleaningCheckBox;
+        private AntdUI.Button _cleaningRulesBtn;
         private FlowLayoutPanel _btnBar;
         private AntdUI.Button _saveConfigBtn;
         private AntdUI.Button _setDefaultBtn;
