@@ -53,13 +53,30 @@ namespace DocExtractor.Core.Pipeline
                     return result;
                 }
 
-                Report(progress, "解析", "正在解析文档...", 5);
+                Report(progress, "解析",
+                    $"正在解析文档... 配置「{config.ConfigName}」含 {config.Fields.Count} 个字段",
+                    5);
 
                 // 2. 解析文档 → RawTable 集合
                 var rawTables = parser.Parse(filePath);
                 result.TablesProcessed = rawTables.Count;
 
                 Report(progress, "解析", $"解析完成，共 {rawTables.Count} 个表格", 20);
+
+                // 诊断：输出前几个表格的表头行
+                for (int di = 0; di < Math.Min(rawTables.Count, 5); di++)
+                {
+                    var dt = rawTables[di];
+                    if (dt.RowCount > 0)
+                    {
+                        var headerCells = new List<string>();
+                        for (int c = 0; c < dt.ColCount; c++)
+                            headerCells.Add(dt.GetValue(0, c));
+                        Report(progress, "诊断",
+                            $"表格{di}({dt.RowCount}行{dt.ColCount}列) 表头: [{string.Join(" | ", headerCells)}]",
+                            20);
+                    }
+                }
 
                 // 3. 过滤表格（按配置）
                 var selectedTables = FilterTables(rawTables, config);
@@ -73,23 +90,37 @@ namespace DocExtractor.Core.Pipeline
                     return result;
                 }
 
-                Report(progress, "列名识别", "正在识别列名...", 30);
+                Report(progress, "列名识别", $"开始处理 {selectedTables.Count} 个表格...", 30);
 
                 var allRecords = new List<ExtractedRecord>();
+                int skippedNoMatch = 0;
 
                 for (int ti = 0; ti < selectedTables.Count; ti++)
                 {
                     var table = selectedTables[ti];
                     int pct = 30 + (int)(40.0 * ti / selectedTables.Count);
-                    Report(progress, "列名识别", $"处理表格 {ti + 1}/{selectedTables.Count}...", pct);
 
                     // 4. 列名规范化
                     var columnMap = BuildColumnMap(table, config);
+
+                    if (columnMap.Count == 0)
+                    {
+                        skippedNoMatch++;
+                        continue; // 此表格无任何列匹配，跳过
+                    }
+
+                    Report(progress, "列名识别",
+                        $"表格 {ti + 1}/{selectedTables.Count}: 匹配到 {columnMap.Count} 列" +
+                        (table.Title != null ? $" ({table.Title})" : ""),
+                        pct);
 
                     // 5. 按行抽取记录
                     var tableRecords = ExtractRecordsFromTable(table, config, columnMap);
                     allRecords.AddRange(tableRecords);
                 }
+
+                if (skippedNoMatch > 0)
+                    result.Warnings.Add($"跳过 {skippedNoMatch} 个表格（列名未匹配到任何字段）");
 
                 Report(progress, "拆分", "正在应用拆分规则...", 75);
 

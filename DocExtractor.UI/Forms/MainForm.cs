@@ -160,6 +160,15 @@ namespace DocExtractor.UI.Forms
                     return pipeline.ExecuteBatch(files, config, progress);
                 });
 
+                // 显示管道错误（解析异常等）
+                foreach (var r in results.Where(r => !r.Success))
+                    AppendLog($"[错误] {Path.GetFileName(r.SourceFile)}: {r.ErrorMessage}");
+
+                // 显示警告
+                foreach (var r in results.Where(r => r.Warnings.Count > 0))
+                    foreach (var w in r.Warnings)
+                        AppendLog($"[警告] {Path.GetFileName(r.SourceFile)}: {w}");
+
                 _lastResults = results.SelectMany(r => r.Records).ToList();
                 ShowResults(_lastResults, config.Fields);
 
@@ -169,12 +178,12 @@ namespace DocExtractor.UI.Forms
                 _statusBarLabel.Text = $"完成 | {total} 条记录";
                 _exportBtn.Enabled = total > 0;
 
-                // 显示警告
-                foreach (var r in results.Where(r => r.Warnings.Count > 0))
-                    foreach (var w in r.Warnings)
-                        AppendLog($"[警告] {Path.GetFileName(r.SourceFile)}: {w}");
-
-                MessageHelper.Success(this, $"抽取完成，共 {total} 条记录");
+                if (total > 0)
+                    MessageHelper.Success(this, $"抽取完成，共 {total} 条记录");
+                else if (results.Any(r => !r.Success))
+                    MessageHelper.Error(this, $"抽取失败：{results.First(r => !r.Success).ErrorMessage}");
+                else
+                    MessageHelper.Warn(this, "未抽取到数据，请检查配置的字段列名变体是否匹配文档表格列头");
             }
             catch (Exception ex)
             {

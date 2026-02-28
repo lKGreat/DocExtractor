@@ -12,7 +12,8 @@ namespace DocExtractor.Core.Models
         {
             "遥测参数抽取",
             "遥控指令抽取",
-            "遥控参数抽取"
+            "遥控参数抽取",
+            "测试细则抽取"
         };
 
         /// <summary>获取所有内置配置</summary>
@@ -20,7 +21,8 @@ namespace DocExtractor.Core.Models
         {
             CreateTelemetryConfig(),
             CreateTelecommandConfig(),
-            CreateTelecommandParamsConfig()
+            CreateTelecommandParamsConfig(),
+            CreateTestSpecConfig()
         };
 
         /// <summary>
@@ -145,6 +147,33 @@ namespace DocExtractor.Core.Models
                     DataType = FieldDataType.Enumeration },
                 new FieldDefinition { FieldName = "ValueRange", DisplayName = "取值范围",
                     KnownColumnVariants = new List<string> { "取值范围", "范围", "有效范围", "值域" } }
+            }
+        };
+        /// <summary>
+        /// 测试细则抽取配置（5 字段）
+        /// 适用于内部测试细则文档，表格含 序号/名称/要求值/检测值/合格结论
+        /// 同时覆盖变体列名：上注值、显示值、实际值、除气时长等
+        /// </summary>
+        public static ExtractionConfig CreateTestSpecConfig() => new ExtractionConfig
+        {
+            ConfigName = "测试细则抽取",
+            HeaderRowCount = 1,
+            ColumnMatch = ColumnMatchMode.HybridRuleFirst,
+            Fields = new List<FieldDefinition>
+            {
+                new FieldDefinition { FieldName = "Index", DisplayName = "序号", DataType = FieldDataType.Integer,
+                    KnownColumnVariants = new List<string> { "序号", "No.", "编号" } },
+                new FieldDefinition { FieldName = "ItemName", DisplayName = "名称",
+                    KnownColumnVariants = new List<string> { "名称", "项目", "检查项目", "测试项目", "参数名称", "检测项" },
+                    IsRequired = true },
+                new FieldDefinition { FieldName = "RequiredValue", DisplayName = "要求值",
+                    KnownColumnVariants = new List<string> { "要求值", "规定值", "指标值", "上注值", "设定值", "标准值" },
+                    IsRequired = true },
+                new FieldDefinition { FieldName = "MeasuredValue", DisplayName = "检测值",
+                    KnownColumnVariants = new List<string> { "检测值", "测试值", "实际值", "显示值", "测量值", "读数" } },
+                new FieldDefinition { FieldName = "Conclusion", DisplayName = "合格结论",
+                    KnownColumnVariants = new List<string> { "合格结论", "结论", "判定", "是否合格", "结果", "除气时长" },
+                    DataType = FieldDataType.Text }
             }
         };
     }
