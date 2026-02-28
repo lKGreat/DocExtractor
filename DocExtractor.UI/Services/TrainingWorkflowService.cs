@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using DocExtractor.Core.Models;
 using DocExtractor.Data.Repositories;
 using DocExtractor.ML;
@@ -70,6 +71,74 @@ namespace DocExtractor.UI.Services
             }
 
             return imported;
+        }
+
+        public int SaveManualColumnMappings(
+            string dbPath,
+            IReadOnlyList<(string RawColumn, string FieldName)> mappings)
+        {
+            if (mappings.Count == 0) return 0;
+
+            int saved = 0;
+            using var repo = new TrainingDataRepository(dbPath);
+            foreach (var m in mappings
+                         .Where(x => !string.IsNullOrWhiteSpace(x.RawColumn)
+                                     && !string.IsNullOrWhiteSpace(x.FieldName))
+                         .Distinct())
+            {
+                repo.AddColumnSample(
+                    m.RawColumn.Trim(),
+                    m.FieldName.Trim(),
+                    "ManualPreview",
+                    isVerified: true);
+                saved++;
+            }
+
+            return saved;
+        }
+
+        public int GetVerifiedManualSampleCount(string dbPath)
+        {
+            using var repo = new TrainingDataRepository(dbPath);
+            return repo.GetVerifiedColumnSampleCount("ManualPreview");
+        }
+
+        public List<ColumnErrorAnalysisItem> BuildColumnErrorAnalysis(
+            string dbPath,
+            ColumnClassifierModel columnModel,
+            int maxRows = 200)
+        {
+            var errors = new List<ColumnErrorAnalysisItem>();
+            if (!columnModel.IsLoaded) return errors;
+
+            using var repo = new TrainingDataRepository(dbPath);
+            var samples = repo.GetColumnSamples(verifiedOnly: true);
+            if (samples.Count == 0)
+                samples = repo.GetColumnSamples();
+
+            foreach (var sample in samples)
+            {
+                var (predicted, confidence) = columnModel.Predict(sample.ColumnText);
+                string actual = sample.FieldName;
+                if (string.IsNullOrWhiteSpace(predicted))
+                    continue;
+
+                if (!string.Equals(predicted, actual, StringComparison.OrdinalIgnoreCase))
+                {
+                    errors.Add(new ColumnErrorAnalysisItem
+                    {
+                        RawColumnName = sample.ColumnText,
+                        PredictedField = predicted,
+                        ActualField = actual,
+                        Confidence = confidence
+                    });
+                }
+            }
+
+            return errors
+                .OrderByDescending(e => e.Confidence)
+                .Take(maxRows)
+                .ToList();
         }
 
         public SectionImportResult ImportSectionSamples(string dbPath, IReadOnlyList<string> filePaths)
@@ -193,5 +262,13 @@ namespace DocExtractor.UI.Services
         public int ImportedCount { get; set; }
         public List<(string fileName, int count)> PerFileCounts { get; set; } =
             new List<(string fileName, int count)>();
+    }
+
+    internal class ColumnErrorAnalysisItem
+    {
+        public string RawColumnName { get; set; } = string.Empty;
+        public string PredictedField { get; set; } = string.Empty;
+        public string ActualField { get; set; } = string.Empty;
+        public float Confidence { get; set; }
     }
 }

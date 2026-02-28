@@ -444,12 +444,17 @@ namespace DocExtractor.UI.Forms
                 Type = AntdUI.TTypeMini.Primary,
                 Size = new Size(175, 30)
             };
+            _columnErrorAnalysisBtn = new AntdUI.Button
+            {
+                Text = "列名错误分析",
+                Size = new Size(120, 30)
+            };
             statsFlow.Controls.AddRange(new Control[]
             {
                 _colSampleCountLabel, _nerSampleCountLabel,
                 _sectionSampleCountLabel, _knowledgeCountLabel,
                 _modelHealthLabel,
-                _genFromKnowledgeBtn, _importCsvBtn, _importSectionWordBtn
+                _genFromKnowledgeBtn, _importCsvBtn, _importSectionWordBtn, _columnErrorAnalysisBtn
             });
             statsGroup.Controls.Add(statsFlow);
 
@@ -642,6 +647,7 @@ namespace DocExtractor.UI.Forms
         private AntdUI.Button _genFromKnowledgeBtn;
         private AntdUI.Button _importCsvBtn;
         private AntdUI.Button _importSectionWordBtn;
+        private AntdUI.Button _columnErrorAnalysisBtn;
         private Label _evalLabel;
         private Label _evalCompareLabel;
         private ProgressBar _trainProgressBar;

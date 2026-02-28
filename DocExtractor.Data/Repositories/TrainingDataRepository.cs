@@ -61,14 +61,19 @@ namespace DocExtractor.Data.Repositories
 
         // ── 列名训练数据 ─────────────────────────────────────────────────────
 
-        public void AddColumnSample(string columnText, string fieldName, string? source = null)
+        public void AddColumnSample(
+            string columnText,
+            string fieldName,
+            string? source = null,
+            bool isVerified = false)
         {
             using var cmd = new SQLiteCommand(
-                "INSERT INTO ColumnTrainingData (ColumnText, FieldName, Source) VALUES (@t, @f, @s)",
+                "INSERT INTO ColumnTrainingData (ColumnText, FieldName, Source, IsVerified) VALUES (@t, @f, @s, @v)",
                 _conn);
             cmd.Parameters.AddWithValue("@t", columnText);
             cmd.Parameters.AddWithValue("@f", fieldName);
             cmd.Parameters.AddWithValue("@s", source ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("@v", isVerified ? 1 : 0);
             cmd.ExecuteNonQuery();
         }
 
@@ -90,6 +95,19 @@ namespace DocExtractor.Data.Repositories
         public int GetColumnSampleCount() =>
             (int)(long)new SQLiteCommand(
                 "SELECT COUNT(*) FROM ColumnTrainingData", _conn).ExecuteScalar()!;
+
+        public int GetVerifiedColumnSampleCount(string? source = null)
+        {
+            string sql = "SELECT COUNT(*) FROM ColumnTrainingData WHERE IsVerified=1";
+            if (!string.IsNullOrWhiteSpace(source))
+                sql += " AND Source=@s";
+
+            using var cmd = new SQLiteCommand(sql, _conn);
+            if (!string.IsNullOrWhiteSpace(source))
+                cmd.Parameters.AddWithValue("@s", source);
+
+            return (int)(long)cmd.ExecuteScalar()!;
+        }
 
         // ── NER 训练数据 ──────────────────────────────────────────────────────
 

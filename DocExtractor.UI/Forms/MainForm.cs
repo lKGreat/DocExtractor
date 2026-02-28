@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using DocExtractor.Core.Interfaces;
 using DocExtractor.Core.Models;
+using DocExtractor.Core.Models.Preview;
 using DocExtractor.Data.Export;
 using DocExtractor.Data.Repositories;
 using DocExtractor.ML.ColumnClassifier;
@@ -46,6 +47,7 @@ namespace DocExtractor.UI.Forms
         private readonly ExtractionWorkflowService _extractionService = new ExtractionWorkflowService();
         private readonly TrainingWorkflowService _trainingService = new TrainingWorkflowService();
         private readonly RecommendationService _recommendationService = new RecommendationService();
+        private int _lastManualTrainingSuggestionCount;
 
         public MainForm()
         {
@@ -171,6 +173,7 @@ namespace DocExtractor.UI.Forms
             _genFromKnowledgeBtn.Click += OnGenerateFromKnowledge;
             _importCsvBtn.Click += OnImportTrainingData;
             _importSectionWordBtn.Click += OnImportSectionFromWord;
+            _columnErrorAnalysisBtn.Click += OnColumnErrorAnalysis;
             _presetCombo.SelectedIndexChanged += OnPresetChanged;
             _cancelTrainBtn.Click += OnCancelTraining;
 
@@ -240,6 +243,8 @@ namespace DocExtractor.UI.Forms
                 foreach (var warning in preview.Warnings.Take(10))
                     AppendLog($"  [预览警告] {warning}");
 
+                HandleLowConfidenceMappingReview(filePath, preview);
+
                 if (preview.Warnings.Count > 0)
                 {
                     MessageHelper.Warn(this,
@@ -257,6 +262,38 @@ namespace DocExtractor.UI.Forms
             finally
             {
                 _previewBtn.Enabled = true;
+            }
+        }
+
+        private void HandleLowConfidenceMappingReview(string filePath, ExtractionPreviewResult preview)
+        {
+            var lowConfidenceItems = preview.Tables
+                .SelectMany(t => t.Columns)
+                .Where(c => c.IsLowConfidence && !string.IsNullOrWhiteSpace(c.RawColumnName))
+                .ToList();
+
+            if (lowConfidenceItems.Count == 0)
+                return;
+
+            using var form = new ColumnMappingReviewForm(lowConfidenceItems, _currentConfig.Fields);
+            if (form.ShowDialog(this) != DialogResult.OK)
+                return;
+
+            int saved = _trainingService.SaveManualColumnMappings(_dbPath, form.Corrections);
+            if (saved > 0)
+            {
+                AppendLog($"已保存 {saved} 条手工列映射标注（来源：{Path.GetFileName(filePath)}）");
+                MessageHelper.Success(this, $"已保存 {saved} 条映射标注");
+                RefreshTrainingStats();
+
+                int verifiedCount = _trainingService.GetVerifiedManualSampleCount(_dbPath);
+                if (verifiedCount >= 25
+                    && verifiedCount != _lastManualTrainingSuggestionCount
+                    && verifiedCount % 25 == 0)
+                {
+                    _lastManualTrainingSuggestionCount = verifiedCount;
+                    MessageHelper.Info(this, $"已积累 {verifiedCount} 条人工确认标注，建议立即重训列名模型。");
+                }
             }
         }
 
@@ -863,6 +900,26 @@ namespace DocExtractor.UI.Forms
             {
                 _genFromKnowledgeBtn.Enabled = true;
                 _trainProgressBar.Style = ProgressBarStyle.Continuous;
+            }
+        }
+
+        private void OnColumnErrorAnalysis(object sender, EventArgs e)
+        {
+            try
+            {
+                var items = _trainingService.BuildColumnErrorAnalysis(_dbPath, _columnModel);
+                if (items.Count == 0)
+                {
+                    MessageHelper.Info(this, "未发现列名分类错误样本，或模型尚未加载。");
+                    return;
+                }
+
+                using var form = new ColumnErrorAnalysisForm(items);
+                form.ShowDialog(this);
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"错误分析失败：{ex.Message}");
             }
         }
 
