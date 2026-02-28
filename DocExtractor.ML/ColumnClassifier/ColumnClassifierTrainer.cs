@@ -58,7 +58,12 @@ namespace DocExtractor.ML.ColumnClassifier
             cancellation.ThrowIfCancellationRequested();
             progress?.Report($"构建 NAS-BERT TextClassification Pipeline (Epochs={p.ColumnEpochs}, Batch={p.ColumnBatchSize})...");
 
-            var pipeline = BuildPipeline(p, split.TestSet);
+            // 验证集也需要 Label 为 Key 类型，先用 MapValueToKey 预转换
+            var labelKeyTransform = _mlContext.Transforms.Conversion.MapValueToKey(
+                outputColumnName: "Label", inputColumnName: "Label").Fit(dataView);
+            var validationKeyed = labelKeyTransform.Transform(split.TestSet);
+
+            var pipeline = BuildPipeline(p, validationKeyed);
 
             cancellation.ThrowIfCancellationRequested();
             progress?.Report("开始训练（NAS-BERT，首次运行将下载预训练权重）...");
