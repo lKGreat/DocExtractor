@@ -1005,6 +1005,13 @@ namespace DocExtractor.UI.Forms
             }
         }
 
+        private void OnOpenPackManager()
+        {
+            using var form = new PackManagerForm(_dbPath, () => _currentConfig);
+            form.ShowDialog(this);
+            LoadConfigList(_currentConfigId);
+        }
+
         // ── 辅助方法 ──────────────────────────────────────────────────────────
 
         private void ShowResults(List<ExtractedRecord> records, IReadOnlyList<FieldDefinition> fields)

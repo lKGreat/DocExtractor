@@ -39,6 +39,8 @@ namespace DocExtractor.UI.Forms
             var toolMenu = new ToolStripMenuItem("工具(&T)");
             toolMenu.DropDownItems.Add(new ToolStripMenuItem("重新生成模板", null, (s, e) => OnRegenerateTemplates()));
             toolMenu.DropDownItems.Add(new ToolStripMenuItem("重新加载模型", null, (s, e) => TryLoadModels()));
+            toolMenu.DropDownItems.Add(new ToolStripSeparator());
+            toolMenu.DropDownItems.Add(new ToolStripMenuItem("配置包管理器", null, (s, e) => OnOpenPackManager()));
 
             var helpMenu = new ToolStripMenuItem("帮助(&H)");
             helpMenu.DropDownItems.Add(new ToolStripMenuItem("关于", null, (s, e) =>

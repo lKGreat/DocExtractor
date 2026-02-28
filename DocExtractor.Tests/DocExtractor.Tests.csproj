@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DocExtractor.Core\DocExtractor.Core.csproj" />
+    <ProjectReference Include="..\DocExtractor.Data\DocExtractor.Data.csproj" />
     <ProjectReference Include="..\DocExtractor.ML\DocExtractor.ML.csproj" />
   </ItemGroup>
 </Project>
