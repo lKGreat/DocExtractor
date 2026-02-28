@@ -85,6 +85,36 @@ namespace DocExtractor.UI.Forms
                 if (files != null) AddFiles(files);
             };
 
+            // 右键：点到未选中项时切换为只选该项，保留已有多选时不变
+            _fileListBox.MouseDown += (s, e) =>
+            {
+                if (e.Button != MouseButtons.Right) return;
+                int idx = _fileListBox.IndexFromPoint(e.Location);
+                if (idx >= 0 && !_fileListBox.GetSelected(idx))
+                {
+                    for (int i = 0; i < _fileListBox.Items.Count; i++)
+                        _fileListBox.SetSelected(i, false);
+                    _fileListBox.SetSelected(idx, true);
+                }
+            };
+
+            // 右键菜单：动态显示选中数量，按情况启/禁
+            _fileContextMenu.Opening += (s, e) =>
+            {
+                int n = _fileListBox.SelectedItems.Count;
+                _removeFileMenuItem.Text = n > 0 ? $"移除选中文件（{n} 个）" : "移除选中文件";
+                _removeFileMenuItem.Enabled = n > 0;
+                _clearAllMenuItem.Enabled = _fileListBox.Items.Count > 0;
+            };
+
+            _removeFileMenuItem.Click += (s, e) =>
+            {
+                var toRemove = _fileListBox.SelectedItems.Cast<string>().ToList();
+                toRemove.ForEach(f => _fileListBox.Items.Remove(f));
+            };
+
+            _clearAllMenuItem.Click += (s, e) => _fileListBox.Items.Clear();
+
             // Config combo event is wired in LoadConfigList()
 
             // Tab 2：字段配置

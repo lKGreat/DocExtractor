@@ -117,6 +117,17 @@ namespace DocExtractor.UI.Forms
             };
             _fileListBox.AllowDrop = true;
 
+            _fileContextMenu = new ContextMenuStrip();
+            _removeFileMenuItem = new ToolStripMenuItem("移除选中文件");
+            _clearAllMenuItem = new ToolStripMenuItem("清空列表");
+            _fileContextMenu.Items.AddRange(new ToolStripItem[]
+            {
+                _removeFileMenuItem,
+                new ToolStripSeparator(),
+                _clearAllMenuItem
+            });
+            _fileListBox.ContextMenuStrip = _fileContextMenu;
+
             var fileBtnPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 40 };
             _addFilesBtn = new AntdUI.Button { Text = "添加文件", Size = new Size(80, 32) };
             _removeFileBtn = new AntdUI.Button { Text = "移除", Size = new Size(60, 32) };
@@ -369,6 +380,9 @@ namespace DocExtractor.UI.Forms
 
         // Tab 1：数据抽取
         private ListBox _fileListBox;
+        private ContextMenuStrip _fileContextMenu;
+        private ToolStripMenuItem _removeFileMenuItem;
+        private ToolStripMenuItem _clearAllMenuItem;
         private AntdUI.Button _addFilesBtn;
         private AntdUI.Button _removeFileBtn;
         private AntdUI.Button _clearFilesBtn;
