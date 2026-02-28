@@ -106,6 +106,7 @@ namespace DocExtractor.UI.Forms
                 toRemove.ForEach(f => _fileListBox.Items.Remove(f));
             };
             _clearFilesBtn.Click += (s, e) => _fileListBox.Items.Clear();
+            _previewBtn.Click += OnQuickPreview;
             _runBtn.Click += OnRunExtraction;
             _exportBtn.Click += OnExport;
 
@@ -194,6 +195,64 @@ namespace DocExtractor.UI.Forms
             {
                 if (!_fileListBox.Items.Contains(f))
                     _fileListBox.Items.Add(f);
+            }
+        }
+
+        private async void OnQuickPreview(object sender, EventArgs e)
+        {
+            if (_fileListBox.Items.Count == 0)
+            {
+                MessageHelper.Warn(this, "请先添加要预览的文件");
+                return;
+            }
+
+            string filePath = _fileListBox.SelectedItem?.ToString()
+                              ?? _fileListBox.Items[0]?.ToString()
+                              ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(filePath))
+                return;
+
+            _previewBtn.Enabled = false;
+            try
+            {
+                AppendLog($"开始快速预览：{Path.GetFileName(filePath)}");
+                var preview = await Task.Run(() =>
+                    _extractionService.Preview(filePath, _currentConfig, _columnModel, _sectionModel));
+
+                if (!preview.Success)
+                {
+                    MessageHelper.Error(this, $"预览失败：{preview.ErrorMessage}");
+                    return;
+                }
+
+                AppendLog($"预览完成：{Path.GetFileName(filePath)} | 表格 {preview.Tables.Count} 个");
+                foreach (var table in preview.Tables)
+                {
+                    int mapped = table.Columns.Count(c => !string.IsNullOrWhiteSpace(c.MappedFieldName));
+                    int lowConfidence = table.Columns.Count(c => c.IsLowConfidence);
+                    AppendLog($"  表格{table.TableIndex + 1} ({table.RowCount}x{table.ColCount}) 匹配列 {mapped}/{table.Columns.Count}，低置信度 {lowConfidence}");
+                }
+
+                foreach (var warning in preview.Warnings.Take(10))
+                    AppendLog($"  [预览警告] {warning}");
+
+                if (preview.Warnings.Count > 0)
+                {
+                    MessageHelper.Warn(this,
+                        $"预览完成：发现 {preview.Warnings.Count} 个低置信度列，请检查配置或手工修正列映射。");
+                }
+                else
+                {
+                    MessageHelper.Success(this, "预览完成：列映射状态良好。");
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"预览失败：{ex.Message}");
+            }
+            finally
+            {
+                _previewBtn.Enabled = true;
             }
         }
 

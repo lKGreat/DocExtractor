@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using DocExtractor.Core.Interfaces;
 using DocExtractor.Core.Models;
 using DocExtractor.Core.Pipeline;
+using DocExtractor.Core.Models.Preview;
 using DocExtractor.ML.ColumnClassifier;
 using DocExtractor.ML.EntityExtractor;
 using DocExtractor.ML.Inference;
@@ -36,6 +37,26 @@ namespace DocExtractor.UI.Services
 
             var pipeline = new ExtractionPipeline(parsers, normalizer, nerModel);
             return pipeline.ExecuteBatch(files, config, progress);
+        }
+
+        public ExtractionPreviewResult Preview(
+            string filePath,
+            ExtractionConfig config,
+            ColumnClassifierModel columnModel,
+            SectionClassifierModel sectionModel)
+        {
+            var normalizer = new HybridColumnNormalizer(columnModel, config.ColumnMatch);
+            var ruleDetector = new SectionHeadingDetector();
+            var hybridHeadingDetector = new HybridSectionHeadingDetector(ruleDetector, sectionModel);
+
+            var parsers = new IDocumentParser[]
+            {
+                new WordDocumentParser(hybridHeadingDetector),
+                new ExcelDocumentParser(config.HeaderRowCount, config.TargetSheets)
+            };
+
+            var previewService = new ExtractionPreviewService(parsers, normalizer);
+            return previewService.Preview(filePath, config);
         }
     }
 }

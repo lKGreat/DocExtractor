@@ -66,6 +66,13 @@ namespace DocExtractor.UI.Forms
                 Font = new Font("微软雅黑", 9, FontStyle.Bold)
             };
 
+            _previewBtn = new AntdUI.Button
+            {
+                Text = "快速预览",
+                Size = new Size(90, 36),
+                Font = new Font("微软雅黑", 9)
+            };
+
             _exportBtn = new AntdUI.Button
             {
                 Text = "导出结果",
@@ -79,7 +86,7 @@ namespace DocExtractor.UI.Forms
             {
                 configLabel, _configCombo,
                 new Label { Width = 16 },
-                _runBtn, _exportBtn
+                _previewBtn, _runBtn, _exportBtn
             });
             _toolbar.Controls.Add(toolFlow);
 
@@ -546,6 +553,7 @@ namespace DocExtractor.UI.Forms
         private MenuStrip _menuStrip;
         private Panel _toolbar;
         private ComboBox _configCombo;
+        private AntdUI.Button _previewBtn;
         private AntdUI.Button _runBtn;
         private AntdUI.Button _exportBtn;
 
