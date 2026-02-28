@@ -80,9 +80,11 @@ namespace DocExtractor.ML.EntityExtractor
             }
 
             // 逐字符预测（串行，WinForms CPU 可接受短文本）
-            var predictions = new List<string>(chars.Length);
+            // 整个预测+解码在 lock 内完成，确保线程安全
+            List<string> predictions;
             lock (_lock)
             {
+                predictions = new List<string>(chars.Length);
                 foreach (var inp in inputs)
                     predictions.Add(_engine!.Predict(inp).PredictedLabel);
             }
@@ -109,14 +111,16 @@ namespace DocExtractor.ML.EntityExtractor
                     while (end + 1 < tags.Count && tags[end + 1] == "I-" + entityTypeStr)
                         end++;
 
+                    // 边界保护：确保 end 不超出 text 长度
+                    int safeEnd = Math.Min(end, text.Length - 1);
                     if (Enum.TryParse<EntityType>(entityTypeStr, true, out var entityType))
                     {
                         entities.Add(new NamedEntity
                         {
-                            Text = text.Substring(start, end - start + 1),
+                            Text = text.Substring(start, safeEnd - start + 1),
                             Type = entityType,
                             StartIndex = start,
-                            EndIndex = end,
+                            EndIndex = safeEnd,
                             Confidence = 0.8f // ML 预测置信度估算
                         });
                     }

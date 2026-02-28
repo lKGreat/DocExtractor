@@ -75,11 +75,12 @@ namespace DocExtractor.Parsing.Word
                             vertMerge[col] = (r, col, text);
                             SetMasterCell(grid, r, col, text, 1, colSpan);
 
-                            // 标记同列其他被合并的列
+                            // 标记 colSpan 范围内的列也属于同一个 VMerge 组
+                            // 所有列统一指向 (r, col) 作为 master
                             for (int cs = 1; cs < colSpan; cs++)
                             {
                                 if (col + cs < colCount)
-                                    vertMerge[col + cs] = (r, col + cs, string.Empty);
+                                    vertMerge[col + cs] = (r, col, string.Empty);
                             }
                         }
                         else

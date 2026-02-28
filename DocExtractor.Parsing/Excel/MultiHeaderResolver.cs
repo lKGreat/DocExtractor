@@ -50,7 +50,17 @@ namespace DocExtractor.Parsing.Excel
                 }
             }
 
-            // 组合：去掉重复父级，如 ["公式系数", "公式系数"] + ["A", "B"] → "公式系数/A", "公式系数/B"
+            // 先向下填充空层级：空单元格继承上方最近的非空值
+            for (int ci = 0; ci < colCount; ci++)
+            {
+                for (int hr = 1; hr < headerRowCount; hr++)
+                {
+                    if (string.IsNullOrWhiteSpace(headerMatrix[hr, ci]))
+                        headerMatrix[hr, ci] = headerMatrix[hr - 1, ci];
+                }
+            }
+
+            // 组合：去掉连续重复父级，如 ["公式系数", "公式系数"] + ["A", "B"] → "公式系数/A", "公式系数/B"
             var result = new string[colCount];
             for (int ci = 0; ci < colCount; ci++)
             {

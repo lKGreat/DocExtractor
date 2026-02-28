@@ -46,18 +46,31 @@ namespace DocExtractor.ML.EntityExtractor
 
             progress?.Report("构建 NER Pipeline (LightGBM)...");
 
+            // 分别对每列生成特征，避免单个 FeaturizeText 5列输入导致维度爆炸
             var pipeline = _mlContext.Transforms.Conversion.MapValueToKey(
                     outputColumnName: "LabelKey",
                     inputColumnName: "Label")
+                // 主字符 token：char n-gram (1-3)
                 .Append(_mlContext.Transforms.Text.FeaturizeText(
-                    "CharFeats",
+                    "CharTokenFeats",
                     options: new TextFeaturizingEstimator.Options
                     {
                         CharFeatureExtractor = new WordBagEstimator.Options { NgramLength = 3, UseAllLengths = true },
                         WordFeatureExtractor = null
                     },
-                    inputColumnNames: new[] { "CharToken", "CtxLeft1", "CtxLeft2", "CtxRight1", "CtxRight2" }))
-                .Append(_mlContext.Transforms.Concatenate("Features", "CharFeats"))
+                    inputColumnNames: new[] { "CharToken" }))
+                // 上下文字符：编码为 key 值（轻量，避免 n-gram 膨胀）
+                .Append(_mlContext.Transforms.Conversion.MapValueToKey("CtxL2Key", "CtxLeft2"))
+                .Append(_mlContext.Transforms.Conversion.MapValueToKey("CtxL1Key", "CtxLeft1"))
+                .Append(_mlContext.Transforms.Conversion.MapValueToKey("CtxR1Key", "CtxRight1"))
+                .Append(_mlContext.Transforms.Conversion.MapValueToKey("CtxR2Key", "CtxRight2"))
+                .Append(_mlContext.Transforms.Conversion.ConvertType("CtxL2F", "CtxL2Key", Microsoft.ML.Data.DataKind.Single))
+                .Append(_mlContext.Transforms.Conversion.ConvertType("CtxL1F", "CtxL1Key", Microsoft.ML.Data.DataKind.Single))
+                .Append(_mlContext.Transforms.Conversion.ConvertType("CtxR1F", "CtxR1Key", Microsoft.ML.Data.DataKind.Single))
+                .Append(_mlContext.Transforms.Conversion.ConvertType("CtxR2F", "CtxR2Key", Microsoft.ML.Data.DataKind.Single))
+                // 合并所有特征：CharToken n-gram + 4个上下文 key + Position
+                .Append(_mlContext.Transforms.Concatenate("Features",
+                    "CharTokenFeats", "CtxL2F", "CtxL1F", "CtxR1F", "CtxR2F", "Position"))
                 .Append(_mlContext.MulticlassClassification.Trainers.LightGbm(
                     new LightGbmMulticlassTrainer.Options
                     {

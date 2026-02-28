@@ -64,6 +64,15 @@ namespace DocExtractor.Core.Pipeline
                 // 3. 过滤表格（按配置）
                 var selectedTables = FilterTables(rawTables, config);
 
+                if (selectedTables.Count == 0)
+                {
+                    Report(progress, "完成", "未找到匹配的表格（过滤条件可能过严）", 100);
+                    result.Success = true;
+                    result.Records = new List<ExtractedRecord>();
+                    result.Warnings.Add("未找到匹配的表格，请检查表格过滤条件");
+                    return result;
+                }
+
                 Report(progress, "列名识别", "正在识别列名...", 30);
 
                 var allRecords = new List<ExtractedRecord>();
@@ -86,6 +95,16 @@ namespace DocExtractor.Core.Pipeline
 
                 // 6. 应用拆分规则（按 Priority 排序）
                 var finalRecords = ApplySplitRules(allRecords, config);
+
+                // 7. 如果有分组规则，按 __GroupKey__ 分组（用于后续分 Sheet 导出）
+                var groupRule = config.SplitRules
+                    .FirstOrDefault(r => r.IsEnabled && r.Type == SplitType.GroupConditionSplit);
+                if (groupRule != null && !string.IsNullOrWhiteSpace(groupRule.GroupByColumn))
+                {
+                    var grouped = Splitting.GroupConditionSplitter.GroupRecords(
+                        finalRecords, groupRule.GroupByColumn);
+                    result.GroupedRecords = grouped;
+                }
 
                 Report(progress, "完成", $"抽取完成，共 {finalRecords.Count} 条记录", 100);
 

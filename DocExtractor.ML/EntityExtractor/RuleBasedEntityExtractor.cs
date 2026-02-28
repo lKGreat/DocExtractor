@@ -20,22 +20,28 @@ namespace DocExtractor.ML.EntityExtractor
             @"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?",
             RegexOptions.Compiled);
 
-        // 单位（常见物理单位，含中文）
+        // 单位（常见物理单位，含中文 + 遥测领域单位）
         private static readonly Regex _unitRegex = new Regex(
-            @"\b(?:V|mV|A|mA|W|mW|Hz|kHz|MHz|GHz|s|ms|μs|us|ns|℃|°C|deg|rpm|Ω|ohm|bit|byte|KB|MB|GB)\b|[%‰]",
-            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            @"\b(?:V|mV|kV|A|mA|μA|W|mW|kW|Hz|kHz|MHz|GHz|s|ms|μs|us|ns|℃|°C|°|deg|rpm|Ω|ohm|bit|byte|Byte|KB|MB|GB|TB|dB|dBm|dBW|rad|bps|kbps|Mbps|Gbps|bit/s|字节|帧|码元|ppm)\b|[%‰]",
+            RegexOptions.Compiled);
 
         // 公式系数：A=xxx, B=xxx
         private static readonly Regex _formulaRegex = new Regex(
             @"[A-Da-d]\s*=\s*-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?",
             RegexOptions.Compiled);
 
+        // 枚举映射：0=关闭;1=开启 或 00:正常/01:故障 格式
+        private static readonly Regex _enumRegex = new Regex(
+            @"\d+\s*[:=]\s*[^\s;/,]+(?:\s*[;/,]\s*\d+\s*[:=]\s*[^\s;/,]+)+",
+            RegexOptions.Compiled);
+
         public IReadOnlyList<NamedEntity> Extract(string text)
         {
             var entities = new List<NamedEntity>();
 
-            // 优先级：HexCode > Formula > Unit > Value
+            // 优先级：HexCode > Enum > Formula > Unit > Value
             AddMatches(entities, _hexRegex, text, EntityType.HexCode, 0.99f);
+            AddMatches(entities, _enumRegex, text, EntityType.Enum, 0.97f);
             AddMatches(entities, _formulaRegex, text, EntityType.Formula, 0.98f);
             AddMatches(entities, _unitRegex, text, EntityType.Unit, 0.95f);
             AddMatches(entities, _valueRegex, text, EntityType.Value, 0.90f);

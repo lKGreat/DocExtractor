@@ -33,6 +33,10 @@ namespace DocExtractor.Core.Interfaces
         public int TablesProcessed { get; set; }
         public int RecordsTotal { get; set; }
         public int RecordsComplete { get; set; }
+        public List<string> Warnings { get; set; } = new List<string>();
+
+        /// <summary>按分组条件拆分后的记录分组（GroupByColumn → 子集），用于分 Sheet 导出</summary>
+        public Dictionary<string, List<ExtractedRecord>>? GroupedRecords { get; set; }
     }
 
     public class PipelineProgress

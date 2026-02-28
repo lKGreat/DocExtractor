@@ -15,31 +15,15 @@ using DocExtractor.ML.EntityExtractor;
 using DocExtractor.ML.Inference;
 using DocExtractor.Parsing.Excel;
 using DocExtractor.Parsing.Word;
+using DocExtractor.UI.Helpers;
 
 namespace DocExtractor.UI.Forms
 {
     /// <summary>
-    /// 主窗口：文件导入、配置选择、执行抽取、查看结果
+    /// 主窗口：单窗口 Tabs 架构，集成数据抽取、字段配置、拆分规则、模型训练
     /// </summary>
-    public class MainForm : Form
+    public partial class MainForm : Form
     {
-        // ── UI 控件 ──────────────────────────────────────────────────────────
-        private ListBox _fileListBox = null!;
-        private Button _addFilesBtn = null!;
-        private Button _removeFileBtn = null!;
-        private Button _clearFilesBtn = null!;
-        private ComboBox _configCombo = null!;
-        private Button _editConfigBtn = null!;
-        private Button _runBtn = null!;
-        private Button _trainBtn = null!;
-        private Button _exportBtn = null!;
-        private DataGridView _resultGrid = null!;
-        private ProgressBar _progressBar = null!;
-        private Label _statusLabel = null!;
-        private RichTextBox _logBox = null!;
-        private StatusStrip _statusStrip = null!;
-        private ToolStripStatusLabel _statusBarLabel = null!;
-
         // ── 状态 ─────────────────────────────────────────────────────────────
         private ExtractionConfig _currentConfig = CreateDefaultConfig();
         private List<ExtractedRecord> _lastResults = new List<ExtractedRecord>();
@@ -52,44 +36,35 @@ namespace DocExtractor.UI.Forms
         {
             _dbPath = Path.Combine(Application.StartupPath, "data", "docextractor.db");
             _modelsDir = Path.Combine(Application.StartupPath, "models");
-            Directory.CreateDirectory(Path.GetDirectoryName(_dbPath)!);
+            Directory.CreateDirectory(Path.GetDirectoryName(_dbPath));
             Directory.CreateDirectory(_modelsDir);
 
             _columnModel = new ColumnClassifierModel();
             _nerModel = new NerModel();
-
-            // 加载已有模型（如果存在）
             TryLoadModels();
 
             InitializeComponent();
-            LoadConfig();
+            WireEvents();
+            LoadConfigList();
+            LoadConfigToGrids();
+            RefreshTrainingStats();
         }
 
-        private void InitializeComponent()
+        // ── 事件绑定 ──────────────────────────────────────────────────────────
+
+        private void WireEvents()
         {
-            Text = "DocExtractor — 文档数据智能抽取系统";
-            Size = new Size(1400, 900);
-            MinimumSize = new Size(900, 600);
-            StartPosition = FormStartPosition.CenterScreen;
-
-            // ── 左侧面板（文件列表）────────────────────────────────────────
-            var leftPanel = new Panel { Dock = DockStyle.Left, Width = 320, Padding = new Padding(8) };
-
-            var fileLabel = new Label
+            // Tab 1：数据抽取
+            _addFilesBtn.Click += OnAddFiles;
+            _removeFileBtn.Click += (s, e) =>
             {
-                Text = "源文件列表",
-                Font = new Font("微软雅黑", 10, FontStyle.Bold),
-                Dock = DockStyle.Top,
-                Height = 30
+                var toRemove = _fileListBox.SelectedItems.Cast<string>().ToList();
+                toRemove.ForEach(f => _fileListBox.Items.Remove(f));
             };
+            _clearFilesBtn.Click += (s, e) => _fileListBox.Items.Clear();
+            _runBtn.Click += OnRunExtraction;
+            _exportBtn.Click += OnExport;
 
-            _fileListBox = new ListBox
-            {
-                Dock = DockStyle.Fill,
-                SelectionMode = SelectionMode.MultiSimple,
-                HorizontalScrollbar = true
-            };
-            _fileListBox.AllowDrop = true;
             _fileListBox.DragEnter += (s, e) =>
             {
                 if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
@@ -101,126 +76,23 @@ namespace DocExtractor.UI.Forms
                 if (files != null) AddFiles(files);
             };
 
-            var fileBtnPanel = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 40,
-                FlowDirection = FlowDirection.LeftToRight
-            };
-
-            _addFilesBtn = new Button { Text = "添加文件", Width = 80, Height = 32 };
-            _addFilesBtn.Click += OnAddFiles;
-            _removeFileBtn = new Button { Text = "移除", Width = 60, Height = 32 };
-            _removeFileBtn.Click += (s, e) =>
-            {
-                var toRemove = _fileListBox.SelectedItems.Cast<string>().ToList();
-                toRemove.ForEach(f => _fileListBox.Items.Remove(f));
-            };
-            _clearFilesBtn = new Button { Text = "清空", Width = 60, Height = 32 };
-            _clearFilesBtn.Click += (s, e) => _fileListBox.Items.Clear();
-
-            fileBtnPanel.Controls.AddRange(new Control[] { _addFilesBtn, _removeFileBtn, _clearFilesBtn });
-
-            leftPanel.Controls.Add(_fileListBox);
-            leftPanel.Controls.Add(fileBtnPanel);
-            leftPanel.Controls.Add(fileLabel);
-
-            // ── 顶部工具栏 ───────────────────────────────────────────────────
-            var toolbar = new Panel { Dock = DockStyle.Top, Height = 54, Padding = new Padding(8, 8, 8, 0) };
-            var toolFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
-
-            var configLabel = new Label { Text = "配置：", TextAlign = ContentAlignment.MiddleLeft, Width = 50, Height = 36 };
-            _configCombo = new ComboBox { Width = 200, Height = 36, DropDownStyle = ComboBoxStyle.DropDownList };
             _configCombo.SelectedIndexChanged += (s, e) => LoadSelectedConfig();
-            _editConfigBtn = new Button { Text = "编辑配置", Width = 80, Height = 36 };
-            _editConfigBtn.Click += OnEditConfig;
 
-            _runBtn = new Button
-            {
-                Text = "▶ 开始抽取",
-                Width = 110,
-                Height = 36,
-                BackColor = Color.FromArgb(0, 120, 215),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
-            };
-            _runBtn.Click += OnRunExtraction;
+            // Tab 2：字段配置
+            _saveConfigBtn.Click += OnSaveConfig;
 
-            _trainBtn = new Button { Text = "训练模型", Width = 90, Height = 36 };
-            _trainBtn.Click += OnOpenTraining;
+            // Tab 3：拆分规则
+            _saveSplitBtn.Click += OnSaveSplitRules;
 
-            _exportBtn = new Button
-            {
-                Text = "导出结果",
-                Width = 90,
-                Height = 36,
-                Enabled = false
-            };
-            _exportBtn.Click += OnExport;
-
-            toolFlow.Controls.AddRange(new Control[]
-            {
-                configLabel, _configCombo, _editConfigBtn,
-                new Label { Width = 20 }, // 间隔
-                _runBtn, _trainBtn, _exportBtn
-            });
-            toolbar.Controls.Add(toolFlow);
-
-            // ── 中部分割（日志 + 结果）──────────────────────────────────────
-            var mainSplit = new SplitContainer
-            {
-                Dock = DockStyle.Fill,
-                Orientation = Orientation.Horizontal,
-                SplitterDistance = 600
-            };
-
-            // 结果 Grid
-            _resultGrid = new DataGridView
-            {
-                Dock = DockStyle.Fill,
-                ReadOnly = false,
-                AllowUserToAddRows = false,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                AlternatingRowsDefaultCellStyle = new DataGridViewCellStyle
-                {
-                    BackColor = Color.FromArgb(245, 245, 250)
-                }
-            };
-
-            // 进度 + 日志
-            var bottomPanel = new Panel { Dock = DockStyle.Fill };
-            _progressBar = new ProgressBar { Dock = DockStyle.Top, Height = 8, Style = ProgressBarStyle.Continuous };
-            _logBox = new RichTextBox
-            {
-                Dock = DockStyle.Fill,
-                ReadOnly = true,
-                BackColor = Color.FromArgb(30, 30, 30),
-                ForeColor = Color.FromArgb(204, 204, 204),
-                Font = new Font("Consolas", 9),
-                ScrollBars = RichTextBoxScrollBars.Vertical
-            };
-            bottomPanel.Controls.Add(_logBox);
-            bottomPanel.Controls.Add(_progressBar);
-
-            mainSplit.Panel1.Controls.Add(_resultGrid);
-            mainSplit.Panel2.Controls.Add(bottomPanel);
-
-            // ── 状态栏 ───────────────────────────────────────────────────────
-            _statusStrip = new StatusStrip();
-            _statusBarLabel = new ToolStripStatusLabel("就绪") { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
-            _statusStrip.Items.Add(_statusBarLabel);
-
-            // ── 布局组装 ─────────────────────────────────────────────────────
-            Controls.Add(mainSplit);
-            Controls.Add(toolbar);
-            Controls.Add(leftPanel);
-            Controls.Add(_statusStrip);
+            // Tab 4：模型训练
+            _trainColumnBtn.Click += OnTrainColumnClassifier;
+            _trainNerBtn.Click += OnTrainNer;
+            _importCsvBtn.Click += OnImportTrainingData;
         }
 
-        // ── 事件处理 ─────────────────────────────────────────────────────────
+        // ── Tab 1：数据抽取事件 ───────────────────────────────────────────────
 
-        private void OnAddFiles(object? sender, EventArgs e)
+        private void OnAddFiles(object sender, EventArgs e)
         {
             using var dlg = new OpenFileDialog
             {
@@ -240,18 +112,19 @@ namespace DocExtractor.UI.Forms
             }
         }
 
-        private async void OnRunExtraction(object? sender, EventArgs e)
+        private async void OnRunExtraction(object sender, EventArgs e)
         {
             if (_fileListBox.Items.Count == 0)
             {
-                MessageBox.Show("请先添加要处理的 Word/Excel 文件。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageHelper.Warn(this, "请先添加要处理的 Word/Excel 文件");
                 return;
             }
 
             _runBtn.Enabled = false;
             _exportBtn.Enabled = false;
             _progressBar.Value = 0;
-            _resultGrid.DataSource = null;
+            _resultGrid.Rows.Clear();
+            _resultGrid.Columns.Clear();
             _lastResults.Clear();
 
             var files = _fileListBox.Items.Cast<string>().ToList();
@@ -283,14 +156,21 @@ namespace DocExtractor.UI.Forms
 
                 int total = _lastResults.Count;
                 int complete = _lastResults.Count(r => r.IsComplete);
-                AppendLog($"\n✓ 完成！共抽取 {total} 条记录（完整: {complete}，不完整: {total - complete}）");
+                AppendLog($"\n完成！共抽取 {total} 条记录（完整: {complete}，不完整: {total - complete}）");
                 _statusBarLabel.Text = $"完成 | {total} 条记录";
                 _exportBtn.Enabled = total > 0;
+
+                // 显示警告
+                foreach (var r in results.Where(r => r.Warnings.Count > 0))
+                    foreach (var w in r.Warnings)
+                        AppendLog($"[警告] {Path.GetFileName(r.SourceFile)}: {w}");
+
+                MessageHelper.Success(this, $"抽取完成，共 {total} 条记录");
             }
             catch (Exception ex)
             {
-                AppendLog($"\n✗ 错误: {ex.Message}");
-                MessageBox.Show($"抽取失败：{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AppendLog($"\n错误: {ex.Message}");
+                MessageHelper.Error(this, $"抽取失败：{ex.Message}");
             }
             finally
             {
@@ -299,24 +179,7 @@ namespace DocExtractor.UI.Forms
             }
         }
 
-        private void OnEditConfig(object? sender, EventArgs e)
-        {
-            using var form = new ExtractionConfigForm(_currentConfig);
-            if (form.ShowDialog() == DialogResult.OK)
-            {
-                _currentConfig = form.Config;
-                SaveCurrentConfig();
-                AppendLog("配置已更新");
-            }
-        }
-
-        private void OnOpenTraining(object? sender, EventArgs e)
-        {
-            using var form = new ModelTrainingForm(_dbPath, _modelsDir, _columnModel, _nerModel);
-            form.ShowDialog();
-        }
-
-        private void OnExport(object? sender, EventArgs e)
+        private void OnExport(object sender, EventArgs e)
         {
             if (_lastResults.Count == 0) return;
 
@@ -332,32 +195,265 @@ namespace DocExtractor.UI.Forms
                 {
                     var exporter = new ExcelExporter();
                     exporter.Export(_lastResults, _currentConfig.Fields, dlg.FileName);
-                    AppendLog($"✓ 已导出到: {dlg.FileName}");
-
-                    if (MessageBox.Show("导出成功！是否打开文件？", "成功",
-                        MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
-                    {
-                        System.Diagnostics.Process.Start(dlg.FileName);
-                    }
+                    AppendLog($"已导出到: {dlg.FileName}");
+                    MessageHelper.Success(this, "导出成功！");
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"导出失败：{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageHelper.Error(this, $"导出失败：{ex.Message}");
                 }
             }
         }
 
-        // ── 辅助方法 ─────────────────────────────────────────────────────────
+        // ── Tab 2：字段配置事件 ───────────────────────────────────────────────
+
+        private void OnSaveConfig(object sender, EventArgs e)
+        {
+            SaveFieldsFromGrid();
+            SaveGlobalSettings();
+            AppendLog("字段配置已保存");
+            MessageHelper.Success(this, "字段配置已保存");
+        }
+
+        private void SaveFieldsFromGrid()
+        {
+            _currentConfig.Fields.Clear();
+            foreach (DataGridViewRow row in _fieldsGrid.Rows)
+            {
+                if (row.IsNewRow) continue;
+                var fieldName = row.Cells["FieldName"].Value?.ToString();
+                if (string.IsNullOrWhiteSpace(fieldName)) continue;
+
+                var f = new FieldDefinition
+                {
+                    FieldName = fieldName!,
+                    DisplayName = row.Cells["DisplayName"].Value?.ToString() ?? fieldName!,
+                    IsRequired = row.Cells["IsRequired"].Value is true
+                };
+
+                if (Enum.TryParse<FieldDataType>(row.Cells["DataType"].Value?.ToString(), out var dt))
+                    f.DataType = dt;
+
+                var variants = row.Cells["Variants"].Value?.ToString() ?? string.Empty;
+                f.KnownColumnVariants = new List<string>(
+                    variants.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries));
+
+                _currentConfig.Fields.Add(f);
+            }
+        }
+
+        private void SaveGlobalSettings()
+        {
+            _currentConfig.HeaderRowCount = (int)_headerRowsSpinner.Value;
+            if (Enum.TryParse<ColumnMatchMode>(_columnMatchCombo.SelectedItem?.ToString(), out var cm))
+                _currentConfig.ColumnMatch = cm;
+        }
+
+        // ── Tab 3：拆分规则事件 ───────────────────────────────────────────────
+
+        private void OnSaveSplitRules(object sender, EventArgs e)
+        {
+            _currentConfig.SplitRules.Clear();
+            foreach (DataGridViewRow row in _splitGrid.Rows)
+            {
+                if (row.IsNewRow) continue;
+                var ruleName = row.Cells["RuleName"].Value?.ToString();
+                if (string.IsNullOrWhiteSpace(ruleName)) continue;
+
+                var r = new SplitRule
+                {
+                    RuleName = ruleName!,
+                    TriggerColumn = row.Cells["TriggerColumn"].Value?.ToString() ?? string.Empty,
+                    GroupByColumn = row.Cells["GroupByColumn"].Value?.ToString() ?? string.Empty,
+                    InheritParentFields = row.Cells["InheritParent"].Value is true,
+                    IsEnabled = row.Cells["Enabled"].Value is true || row.Cells["Enabled"].Value == null
+                };
+
+                if (Enum.TryParse<SplitType>(row.Cells["Type"].Value?.ToString(), out var st))
+                    r.Type = st;
+
+                var delimiters = row.Cells["Delimiters"].Value?.ToString() ?? "/;、";
+                r.Delimiters = new List<string>(
+                    delimiters.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries));
+
+                if (int.TryParse(row.Cells["Priority"].Value?.ToString(), out int pri))
+                    r.Priority = pri;
+
+                _currentConfig.SplitRules.Add(r);
+            }
+
+            AppendLog("拆分规则已保存");
+            MessageHelper.Success(this, "拆分规则已保存");
+        }
+
+        // ── Tab 4：模型训练事件 ───────────────────────────────────────────────
+
+        private async void OnTrainColumnClassifier(object sender, EventArgs e)
+        {
+            _trainColumnBtn.Enabled = false;
+            _trainProgressBar.Style = ProgressBarStyle.Marquee;
+            _trainLogBox.Clear();
+
+            try
+            {
+                List<(string ColumnText, string FieldName)> samples;
+                using (var repo = new TrainingDataRepository(_dbPath))
+                    samples = repo.GetColumnSamples();
+
+                if (samples.Count < 10)
+                {
+                    MessageHelper.Warn(this,
+                        $"列名分类样本不足（当前 {samples.Count} 条，至少需要 10 条），请先导入训练数据");
+                    return;
+                }
+
+                var inputs = samples.ConvertAll(s => new ColumnInput
+                {
+                    ColumnText = s.ColumnText,
+                    Label = s.FieldName
+                });
+
+                var progress = new Progress<string>(msg => AppendTrainLog(msg));
+                var trainer = new ColumnClassifierTrainer();
+                string modelPath = Path.Combine(_modelsDir, "column_classifier.zip");
+
+                var eval = await Task.Run(() => trainer.Train(inputs, modelPath, progress));
+
+                _columnModel.Reload(modelPath);
+                _evalLabel.Text = $"列名分类器：{eval}";
+                AppendTrainLog($"\n训练完成！{eval}");
+                MessageHelper.Success(this, "列名分类器训练完成");
+            }
+            catch (Exception ex)
+            {
+                AppendTrainLog($"\n训练失败: {ex.Message}");
+                MessageHelper.Error(this, $"训练失败：{ex.Message}");
+            }
+            finally
+            {
+                _trainColumnBtn.Enabled = true;
+                _trainProgressBar.Style = ProgressBarStyle.Continuous;
+                RefreshTrainingStats();
+            }
+        }
+
+        private async void OnTrainNer(object sender, EventArgs e)
+        {
+            _trainNerBtn.Enabled = false;
+            _trainProgressBar.Style = ProgressBarStyle.Marquee;
+
+            try
+            {
+                List<NerAnnotation> samples;
+                using (var repo = new TrainingDataRepository(_dbPath))
+                    samples = repo.GetNerSamples();
+
+                if (samples.Count < 20)
+                {
+                    MessageHelper.Warn(this,
+                        $"NER 样本不足（当前 {samples.Count} 条，至少需要 20 条）");
+                    return;
+                }
+
+                var progress = new Progress<string>(msg => AppendTrainLog(msg));
+                var trainer = new NerTrainer();
+                string modelPath = Path.Combine(_modelsDir, "ner_model.zip");
+
+                var eval = await Task.Run(() => trainer.Train(samples, modelPath, progress));
+                _nerModel.Load(modelPath);
+
+                _evalLabel.Text = $"NER 模型：{eval}";
+                AppendTrainLog($"\nNER 训练完成！{eval}");
+                MessageHelper.Success(this, "NER 模型训练完成");
+            }
+            catch (Exception ex)
+            {
+                AppendTrainLog($"\nNER 训练失败: {ex.Message}");
+                MessageHelper.Error(this, $"NER 训练失败：{ex.Message}");
+            }
+            finally
+            {
+                _trainNerBtn.Enabled = true;
+                _trainProgressBar.Style = ProgressBarStyle.Continuous;
+                RefreshTrainingStats();
+            }
+        }
+
+        private void OnImportTrainingData(object sender, EventArgs e)
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Filter = "CSV/Excel 文件|*.csv;*.xlsx",
+                Title = "选择列名标注数据文件（格式：列名,规范字段名）"
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+
+            try
+            {
+                int imported = 0;
+                using var repo = new TrainingDataRepository(_dbPath);
+
+                foreach (var line in File.ReadAllLines(dlg.FileName, System.Text.Encoding.UTF8))
+                {
+                    var parts = line.Split(',');
+                    if (parts.Length >= 2 && !string.IsNullOrWhiteSpace(parts[0]))
+                    {
+                        repo.AddColumnSample(parts[0].Trim(), parts[1].Trim(), dlg.FileName);
+                        imported++;
+                    }
+                }
+
+                RefreshTrainingStats();
+                AppendTrainLog($"从文件导入 {imported} 条列名标注");
+                MessageHelper.Success(this, $"成功导入 {imported} 条标注数据");
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"导入失败：{ex.Message}");
+            }
+        }
+
+        // ── 菜单事件 ──────────────────────────────────────────────────────────
+
+        private void OnOpenTemplateDir()
+        {
+            string templateDir = Path.Combine(Application.StartupPath, "templates");
+            if (Directory.Exists(templateDir))
+                System.Diagnostics.Process.Start("explorer.exe", templateDir);
+            else
+                MessageHelper.Warn(this, "模板目录不存在，将在下次启动时自动创建");
+        }
+
+        private void OnRegenerateTemplates()
+        {
+            try
+            {
+                string templateDir = Path.Combine(Application.StartupPath, "templates");
+                // 删除旧模板
+                if (Directory.Exists(templateDir))
+                {
+                    foreach (var f in Directory.GetFiles(templateDir, "*.xlsx"))
+                        File.Delete(f);
+                }
+                TemplateGenerator.EnsureTemplates(templateDir);
+                MessageHelper.Success(this, "模板已重新生成");
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"模板生成失败：{ex.Message}");
+            }
+        }
+
+        // ── 辅助方法 ──────────────────────────────────────────────────────────
 
         private void ShowResults(List<ExtractedRecord> records, IReadOnlyList<FieldDefinition> fields)
         {
             _resultGrid.Columns.Clear();
+            _resultGrid.Rows.Clear();
 
-            // 添加元数据列
             _resultGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "_Source", HeaderText = "来源文件" });
             _resultGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "_Complete", HeaderText = "完整" });
 
-            // 添加字段列
             foreach (var f in fields)
             {
                 _resultGrid.Columns.Add(new DataGridViewTextBoxColumn
@@ -367,14 +463,13 @@ namespace DocExtractor.UI.Forms
                 });
             }
 
-            // 填充数据
             foreach (var r in records)
             {
                 var row = new DataGridViewRow();
                 row.CreateCells(_resultGrid);
 
                 row.Cells[0].Value = Path.GetFileName(r.SourceFile);
-                row.Cells[1].Value = r.IsComplete ? "✓" : "✗";
+                row.Cells[1].Value = r.IsComplete ? "\u2713" : "\u2717";
                 if (!r.IsComplete)
                     row.DefaultCellStyle.BackColor = Color.FromArgb(255, 235, 235);
 
@@ -396,27 +491,81 @@ namespace DocExtractor.UI.Forms
             _logBox.ScrollToCaret();
         }
 
-        private void LoadConfig()
+        private void AppendTrainLog(string message)
+        {
+            if (_trainLogBox.InvokeRequired)
+            {
+                _trainLogBox.Invoke(new Action(() => AppendTrainLog(message)));
+                return;
+            }
+            _trainLogBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}\n");
+            _trainLogBox.ScrollToCaret();
+        }
+
+        private void LoadConfigList()
         {
             _configCombo.Items.Clear();
-            _configCombo.Items.Add("默认配置（遥测/遥控）");
+            _configCombo.Items.Add("遥测/遥控配置");
             _configCombo.Items.Add("通用表格模式");
             _configCombo.SelectedIndex = 0;
         }
 
         private void LoadSelectedConfig()
         {
-            // 内置默认配置，实际项目中从SQLite读取
             if (_configCombo.SelectedIndex == 0)
                 _currentConfig = CreateTelemetryConfig();
             else
                 _currentConfig = CreateDefaultConfig();
+
+            LoadConfigToGrids();
         }
 
-        private void SaveCurrentConfig()
+        private void LoadConfigToGrids()
         {
-            // 持久化到 SQLite（简化实现：此处仅记录）
-            AppendLog($"配置 [{_currentConfig.ConfigName}] 已保存");
+            // 字段定义 → Grid
+            _fieldsGrid.Rows.Clear();
+            foreach (var f in _currentConfig.Fields)
+            {
+                _fieldsGrid.Rows.Add(
+                    f.FieldName,
+                    f.DisplayName,
+                    f.DataType.ToString(),
+                    f.IsRequired,
+                    string.Join(",", f.KnownColumnVariants));
+            }
+
+            // 拆分规则 → Grid
+            _splitGrid.Rows.Clear();
+            foreach (var r in _currentConfig.SplitRules)
+            {
+                _splitGrid.Rows.Add(
+                    r.RuleName,
+                    r.Type.ToString(),
+                    r.TriggerColumn,
+                    string.Join(",", r.Delimiters),
+                    r.GroupByColumn,
+                    r.InheritParentFields,
+                    r.Priority.ToString(),
+                    r.IsEnabled);
+            }
+
+            // 全局设置
+            _headerRowsSpinner.Value = _currentConfig.HeaderRowCount;
+            var matchItem = _columnMatchCombo.Items.Cast<string>()
+                .FirstOrDefault(x => x == _currentConfig.ColumnMatch.ToString());
+            if (matchItem != null)
+                _columnMatchCombo.SelectedItem = matchItem;
+        }
+
+        private void RefreshTrainingStats()
+        {
+            try
+            {
+                using var repo = new TrainingDataRepository(_dbPath);
+                _colSampleCountLabel.Text = $"列名分类样本：{repo.GetColumnSampleCount()} 条";
+                _nerSampleCountLabel.Text = $"NER 标注样本：{repo.GetNerSampleCount()} 条";
+            }
+            catch { }
         }
 
         private void TryLoadModels()
@@ -425,8 +574,7 @@ namespace DocExtractor.UI.Forms
             string nerModelPath = Path.Combine(_modelsDir, "ner_model.zip");
 
             try { if (File.Exists(colModelPath)) _columnModel.Load(colModelPath); }
-            catch { /* 模型文件损坏时忽略 */ }
-
+            catch { }
             try { if (File.Exists(nerModelPath)) _nerModel.Load(nerModelPath); }
             catch { }
         }
