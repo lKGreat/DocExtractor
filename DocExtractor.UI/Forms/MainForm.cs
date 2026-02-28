@@ -489,6 +489,7 @@ namespace DocExtractor.UI.Forms
             _currentConfig.HeaderRowCount = (int)_headerRowsSpinner.Value;
             if (Enum.TryParse<ColumnMatchMode>(_columnMatchCombo.SelectedItem?.ToString(), out var cm))
                 _currentConfig.ColumnMatch = cm;
+            _currentConfig.EnableValueNormalization = _valueNormalizationCheckBox.Checked;
         }
 
         // ── Tab 3：拆分规则事件 ───────────────────────────────────────────────
@@ -1284,6 +1285,7 @@ namespace DocExtractor.UI.Forms
                 .FirstOrDefault(x => x == _currentConfig.ColumnMatch.ToString());
             if (matchItem != null)
                 _columnMatchCombo.SelectedItem = matchItem;
+            _valueNormalizationCheckBox.Checked = _currentConfig.EnableValueNormalization;
         }
 
         private void RefreshTrainingStats()

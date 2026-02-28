@@ -303,8 +303,11 @@ namespace DocExtractor.UI.Forms
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 4,
+                RowCount = 2,
                 Padding = new Padding(8)
             };
+            settingsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+            settingsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             _headerRowsSpinner = new NumericUpDown { Minimum = 1, Maximum = 5, Value = 1, Width = 80 };
             _columnMatchCombo = new ComboBox
             {
@@ -312,11 +315,19 @@ namespace DocExtractor.UI.Forms
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Width = 180
             };
+            _valueNormalizationCheckBox = new CheckBox
+            {
+                Text = "启用抽取值归一化（推荐）",
+                Checked = true,
+                AutoSize = true
+            };
 
             settingsPanel.Controls.Add(new Label { Text = "表头行数：", TextAlign = ContentAlignment.MiddleRight, Width = 80 }, 0, 0);
             settingsPanel.Controls.Add(_headerRowsSpinner, 1, 0);
             settingsPanel.Controls.Add(new Label { Text = "列名匹配：", TextAlign = ContentAlignment.MiddleRight, Width = 80 }, 2, 0);
             settingsPanel.Controls.Add(_columnMatchCombo, 3, 0);
+            settingsPanel.Controls.Add(_valueNormalizationCheckBox, 0, 1);
+            settingsPanel.SetColumnSpan(_valueNormalizationCheckBox, 4);
 
             // 底部操作按钮
             var configBtnPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 42 };
@@ -572,6 +583,7 @@ namespace DocExtractor.UI.Forms
         private DataGridView _fieldsGrid;
         private NumericUpDown _headerRowsSpinner;
         private ComboBox _columnMatchCombo;
+        private CheckBox _valueNormalizationCheckBox;
         private AntdUI.Button _saveConfigBtn;
         private AntdUI.Button _setDefaultBtn;
         private AntdUI.Button _newConfigBtn;

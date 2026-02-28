@@ -79,6 +79,8 @@ namespace DocExtractor.Data.Export
                     config.HeaderRowCount = hrc;
                 else if (key == "列名匹配模式" && Enum.TryParse<ColumnMatchMode>(val, out var cm))
                     config.ColumnMatch = cm;
+                else if (key == "启用值归一化")
+                    config.EnableValueNormalization = IsTrue(val);
             }
         }
 
