@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - "cursor/**"
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore DocExtractor.sln
+
+      - name: Build
+        run: dotnet build DocExtractor.sln -c Release --no-restore
+
+      - name: Test (net8.0) with coverage
+        run: dotnet test DocExtractor.Tests/DocExtractor.Tests.csproj -c Release --framework net8.0 --no-build --collect:"XPlat Code Coverage"
+
+      - name: Enforce coverage threshold (>= 70%)
+        shell: pwsh
+        run: |
+          $coverageFile = Get-ChildItem -Path . -Recurse -Filter "coverage.cobertura.xml" | Select-Object -First 1
+          if (-not $coverageFile) {
+            throw "Coverage file not found."
+          }
+
+          [xml]$coverageXml = Get-Content $coverageFile.FullName
+          $lineRate = [double]$coverageXml.coverage.'line-rate'
+          $percent = [math]::Round($lineRate * 100, 2)
+
+          Write-Host "Line coverage: $percent%"
+          if ($lineRate -lt 0.70) {
+            throw "Coverage threshold failed. Required >= 70%, actual = $percent%"
+          }
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-cobertura
+          path: "**/coverage.cobertura.xml"
