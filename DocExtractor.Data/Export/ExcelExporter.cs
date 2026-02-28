@@ -95,12 +95,41 @@ namespace DocExtractor.Data.Export
                 }
             }
 
-            // 自动列宽
+            // 自适应列宽（兼容中文）
             for (int c = 1; c <= fields.Count; c++)
-                sheet.Column(c).AutoFit();
+            {
+                double maxLen = GetDisplayWidth(fields[c - 1].DisplayName);
+                for (int r = 0; r < records.Count; r++)
+                {
+                    string val = sheet.Cells[r + 2, c].Text ?? string.Empty;
+                    double len = GetDisplayWidth(val);
+                    if (len > maxLen) maxLen = len;
+                }
+                // 限制在 8~60 之间，+2 留余量
+                sheet.Column(c).Width = System.Math.Max(8, System.Math.Min(maxLen + 2, 60));
+            }
 
             // 冻结首行
             sheet.View.FreezePanes(2, 1);
+
+            // 自动筛选
+            if (records.Count > 0)
+                sheet.Cells[1, 1, 1, fields.Count].AutoFilter = true;
+        }
+
+        /// <summary>计算字符串显示宽度（中文字符算 2，其余算 1）</summary>
+        private static double GetDisplayWidth(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            double width = 0;
+            foreach (char c in text)
+            {
+                if (c > 0x7F) // 非 ASCII（中文、日文等宽字符）
+                    width += 2;
+                else
+                    width += 1;
+            }
+            return width;
         }
 
         private static string SanitizeSheetName(string name)
