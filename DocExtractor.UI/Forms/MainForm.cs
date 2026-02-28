@@ -1014,6 +1014,12 @@ namespace DocExtractor.UI.Forms
             LoadConfigList(_currentConfigId);
         }
 
+        private void OnOpenDiagnostics()
+        {
+            using var form = new DiagnosticsForm(_dbPath, _modelsDir);
+            form.ShowDialog(this);
+        }
+
         // ── 辅助方法 ──────────────────────────────────────────────────────────
 
         private void ShowResults(List<ExtractedRecord> records, IReadOnlyList<FieldDefinition> fields)

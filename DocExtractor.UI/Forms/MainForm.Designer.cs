@@ -42,11 +42,14 @@ namespace DocExtractor.UI.Forms
             toolMenu.DropDownItems.Add(new ToolStripSeparator());
             toolMenu.DropDownItems.Add(new ToolStripMenuItem("配置包管理器", null, (s, e) => OnOpenPackManager()));
 
+            var diagnoseMenu = new ToolStripMenuItem("诊断(&D)");
+            diagnoseMenu.DropDownItems.Add(new ToolStripMenuItem("系统健康度报告", null, (s, e) => OnOpenDiagnostics()));
+
             var helpMenu = new ToolStripMenuItem("帮助(&H)");
             helpMenu.DropDownItems.Add(new ToolStripMenuItem("关于", null, (s, e) =>
                 Helpers.MessageHelper.Info(this, "DocExtractor v1.0 \u2014 文档数据智能抽取系统")));
 
-            _menuStrip.Items.AddRange(new ToolStripItem[] { fileMenu, toolMenu, helpMenu });
+            _menuStrip.Items.AddRange(new ToolStripItem[] { fileMenu, toolMenu, diagnoseMenu, helpMenu });
 
             // ── 工具栏 ────────────────────────────────────────────────────────
             _toolbar = new Panel { Dock = DockStyle.Top, Height = 50, Padding = new Padding(8, 6, 8, 6) };
