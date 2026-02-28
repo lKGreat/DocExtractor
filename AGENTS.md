@@ -112,22 +112,93 @@ Model directory: `{AppPath}/models/`
 - `Standard()`
 - `Fine()`
 
-## 8) UI Rules (DocExtractor.UI)
+## 8) UI Architecture (DocExtractor.UI)
 
-Use AntdUI components for WinForms UI work. Prefer AntdUI equivalents instead of raw controls.
+### Overall Structure
 
-Form files must follow the 3-file pattern:
+The UI follows a **MainForm + UserControl** architecture. MainForm is a thin shell; all feature logic lives in dedicated UserControl panels.
 
-- `MainForm.cs` - behavior/event wiring
-- `MainForm.Designer.cs` - control declarations + `InitializeComponent`
-- `MainForm.resx` - resources
+```
+DocExtractor.UI/
+├── Forms/          ← MainForm + standalone dialog Forms
+├── Controls/       ← UserControl panels (one per feature area)
+├── Context/        ← DocExtractorContext (shared state container)
+├── Services/       ← Internal workflow services
+├── Helpers/        ← MessageHelper etc.
+└── Logging/        ← UiFileLoggerProvider
+```
 
-Keep business logic out of `*.Designer.cs`.
+### Navigation Model
 
-Prefer toast/inline notifications over modal dialogs:
+MainForm has a **left navigation panel** (vertical buttons) and a **right content panel**. Switching features calls `ShowPanel(UserControl)` which:
+1. Removes the active UserControl from `_contentPanel`
+2. Docks the new UserControl to Fill and adds it
+3. Calls `OnActivated()` on the panel for any refresh needed
 
-- use `AntdUI.Message` / `AntdUI.Notification`
-- reserve modal confirmations for destructive irreversible actions
+Do **not** use `TabControl` for main navigation — use this content-swap pattern.
+
+### 3-File Convention for Forms and UserControls
+
+Every Form and UserControl uses exactly 3 files:
+
+```
+ClassName.cs           ← constructor, event wiring, thin handlers, no layout
+ClassName.Designer.cs  ← InitializeComponent() only, all control declarations
+ClassName.resx         ← embedded resources (leave empty if unused)
+```
+
+Rules:
+- `*.Designer.cs` must be **VS designer-compatible**: include `AutoScaleDimensions`, `AutoScaleMode`, `SuspendLayout`/`ResumeLayout`, and `this.Name`. No conditional logic, no business logic.
+- `*.cs` wires events in the constructor and delegates to small focused methods.
+- All control fields declared in `*.Designer.cs` must be `private`.
+
+### Code Size and Responsibility Limits
+
+- **Max ~300 lines** per `.cs` file (designer files may run slightly longer for complex layouts)
+- **Max ~40 lines** per method — single responsibility only
+- One concern per method: an event handler either updates UI state **or** calls a service **or** shows a notification — never all three inline
+- Extract repeated UI patterns into dedicated private helper methods
+
+### Shared State: `DocExtractorContext`
+
+All UserControl panels receive a `DocExtractorContext` via their constructor (dependency injection). Never instantiate services or repositories directly inside a panel.
+
+`DocExtractorContext` exposes:
+- Paths: `DbPath`, `ModelsDir`, `StartupPath`
+- ML models: `ColumnModel`, `NerModel`, `SectionModel`
+- Services: `ConfigService`, `ExtractionService`, `TrainingService`, `RecommendationService`
+- Loggers: `Logger` (pipeline), `TrainLogger` (training)
+- Events: `ConfigChanged`, `ConfigListChanged`, `ModelsReloaded`, `StatusMessage`, `LogLine`, `TrainLogLine`
+
+### Cross-Panel Communication
+
+Panels communicate through `DocExtractorContext` events, not direct references:
+- Panel fires an event on `_ctx` → MainForm or other panels subscribe and react
+- Example: `FieldConfigPanel` raises `ConfigListChanged` → MainForm reloads the config combo
+
+### Dialog Extraction Rule
+
+**Never use inline `new Form()`** for dialogs. Every dialog must be a proper 3-file Form class in `Forms/`. Two standard dialogs already exist: `InputDialogForm` (single text input) and `ExportFieldSelectionForm` (field checklist).
+
+### Notifications
+
+- `MessageHelper.Info/Success/Warn/Error(Control, string)` — accepts any Control (Form or UserControl), wraps AntdUI toast notifications, auto-dismissed
+- Reserve `MessageBox.Show` only for destructive irreversible confirmations (delete config, overwrite data)
+
+### AntdUI Component Usage
+
+Use AntdUI equivalents instead of raw WinForms controls where available:
+
+| Need | AntdUI component |
+|------|-----------------|
+| Button | `AntdUI.Button` |
+| Input / TextBox | `AntdUI.Input` |
+| Table / Grid | `AntdUI.Table` |
+| Progress | `AntdUI.Progress` |
+| Notification / Status | `AntdUI.Message`, `AntdUI.Badge` |
+| Menu | `AntdUI.Menu` |
+| Select / ComboBox | `AntdUI.Select` |
+| Loading | `AntdUI.Spin` |
 
 ## 9) EPPlus Requirement
 
