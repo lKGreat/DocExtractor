@@ -25,14 +25,22 @@ namespace DocExtractor.ML.ColumnClassifier
         /// <summary>从 .zip 文件加载已训练模型</summary>
         public void Load(string modelPath)
         {
-            if (!File.Exists(modelPath))
-                throw new FileNotFoundException($"模型文件不存在: {modelPath}");
+            if (!File.Exists(modelPath)) return;
 
             lock (_lock)
             {
-                _engine?.Dispose();
-                _model = _mlContext.Model.Load(modelPath, out _);
-                _engine = _mlContext.Model.CreatePredictionEngine<ColumnInput, ColumnPrediction>(_model);
+                try
+                {
+                    _engine?.Dispose();
+                    _model = _mlContext.Model.Load(modelPath, out _);
+                    _engine = _mlContext.Model.CreatePredictionEngine<ColumnInput, ColumnPrediction>(_model);
+                }
+                catch
+                {
+                    // 旧格式模型（SDCA）不兼容 TorchSharp，需要重新训练
+                    _model = null;
+                    _engine = null;
+                }
             }
         }
 

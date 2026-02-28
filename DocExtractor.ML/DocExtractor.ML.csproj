@@ -9,11 +9,14 @@
 
   <ItemGroup>
     <!-- ML.NET 核心（兼容 .NET Standard 2.0 → .NET Framework 4.8） -->
-    <PackageReference Include="Microsoft.ML" Version="2.0.1" />
+    <PackageReference Include="Microsoft.ML" Version="5.0.0" />
     <!-- LightGBM 梯度提升（NER BIO 分类） -->
-    <PackageReference Include="Microsoft.ML.FastTree" Version="2.0.1" />
+    <PackageReference Include="Microsoft.ML.FastTree" Version="5.0.0" />
     <!-- LightGBM 多分类 -->
-    <PackageReference Include="Microsoft.ML.LightGbm" Version="2.0.1" />
+    <PackageReference Include="Microsoft.ML.LightGbm" Version="5.0.0" />
+    <!-- TorchSharp NAS-BERT (TextClassification + NER) -->
+    <PackageReference Include="Microsoft.ML.TorchSharp" Version="0.23.0" />
+    <PackageReference Include="libtorch-cpu-win-x64" Version="2.5.1" />
     <!-- System.Data.SQLite 用于训练数据存取 -->
     <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
     <PackageReference Include="CsvHelper" Version="27.2.1" />

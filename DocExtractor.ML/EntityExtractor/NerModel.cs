@@ -8,14 +8,22 @@ using DocExtractor.Core.Interfaces;
 namespace DocExtractor.ML.EntityExtractor
 {
     /// <summary>
-    /// 基于字符级BIO标注的命名实体识别模型
-    /// 将单元格文本拆分为字符序列 → 预测每个字符的BIO标签 → 组合成实体
+    /// 基于 NAS-BERT 的命名实体识别模型
+    /// 将单元格文本拆分为字符序列（空格分隔） → 整句预测 BIO 标签 → 组合成实体
+    /// 兼容旧格式（字符级 LightGBM）的降级加载
     /// </summary>
     public class NerModel : IEntityExtractor, IDisposable
     {
         private readonly MLContext _mlContext;
         private ITransformer? _model;
-        private PredictionEngine<NerInput, NerPrediction>? _engine;
+
+        // NAS-BERT 句级推理引擎
+        private PredictionEngine<NerWordInput, NerWordOutput>? _wordEngine;
+
+        // 旧格式字符级推理引擎（降级兼容）
+        private PredictionEngine<NerInput, NerPrediction>? _charEngine;
+        private bool _useCharLevel = false;
+
         private readonly object _lock = new object();
 
         public bool IsLoaded => _model != null;
@@ -33,9 +41,35 @@ namespace DocExtractor.ML.EntityExtractor
             if (!File.Exists(modelPath)) return;
             lock (_lock)
             {
-                _engine?.Dispose();
-                _model = _mlContext.Model.Load(modelPath, out _);
-                _engine = _mlContext.Model.CreatePredictionEngine<NerInput, NerPrediction>(_model);
+                try
+                {
+                    // 尝试加载为 NAS-BERT 句级模型
+                    _wordEngine?.Dispose();
+                    _charEngine?.Dispose();
+                    _model = _mlContext.Model.Load(modelPath, out _);
+                    _wordEngine = _mlContext.Model.CreatePredictionEngine<NerWordInput, NerWordOutput>(_model);
+                    _charEngine = null;
+                    _useCharLevel = false;
+                }
+                catch
+                {
+                    try
+                    {
+                        // 降级：尝试加载为旧格式字符级模型
+                        _model = _mlContext.Model.Load(modelPath, out _);
+                        _charEngine = _mlContext.Model.CreatePredictionEngine<NerInput, NerPrediction>(_model);
+                        _wordEngine = null;
+                        _useCharLevel = true;
+                    }
+                    catch
+                    {
+                        // 两种格式都不兼容，需要重新训练
+                        _model = null;
+                        _wordEngine = null;
+                        _charEngine = null;
+                        _useCharLevel = false;
+                    }
+                }
             }
         }
 
@@ -49,7 +83,7 @@ namespace DocExtractor.ML.EntityExtractor
             // 2. 如果ML模型已加载，用ML处理规则未覆盖的区域
             if (!IsLoaded) return ruleEntities;
 
-            var mlEntities = ExtractWithMl(text);
+            var mlEntities = _useCharLevel ? ExtractWithCharLevel(text) : ExtractWithWordLevel(text);
 
             // 3. 合并：规则优先，ML填补空白
             return MergeEntities(ruleEntities, mlEntities);
@@ -60,9 +94,30 @@ namespace DocExtractor.ML.EntityExtractor
             return Extract(text).Where(e => e.Type == type).ToList();
         }
 
-        private IReadOnlyList<NamedEntity> ExtractWithMl(string text)
+        /// <summary>NAS-BERT 整句推理</summary>
+        private IReadOnlyList<NamedEntity> ExtractWithWordLevel(string text)
         {
-            // 字符化 → 生成 NerInput 序列 → 预测 → BIO解码
+            var chars = text.ToCharArray();
+            // 每个字符用空格分隔，与训练时格式一致
+            string spaceSeparated = string.Join(" ", chars.Select(c => c.ToString()));
+
+            NerWordOutput output;
+            lock (_lock)
+            {
+                var input = new NerWordInput { Sentence = spaceSeparated };
+                output = _wordEngine!.Predict(input);
+            }
+
+            if (output.PredictedLabel == null || output.PredictedLabel.Length == 0)
+                return Array.Empty<NamedEntity>();
+
+            // BIO 标签数组 → 实体列表
+            return DecodeBIOSequence(text, output.PredictedLabel.ToList());
+        }
+
+        /// <summary>旧格式字符级逐字预测（降级兼容）</summary>
+        private IReadOnlyList<NamedEntity> ExtractWithCharLevel(string text)
+        {
             var chars = text.ToCharArray();
             var inputs = new List<NerInput>(chars.Length);
 
@@ -79,14 +134,12 @@ namespace DocExtractor.ML.EntityExtractor
                 });
             }
 
-            // 逐字符预测（串行，WinForms CPU 可接受短文本）
-            // 整个预测+解码在 lock 内完成，确保线程安全
             List<string> predictions;
             lock (_lock)
             {
                 predictions = new List<string>(chars.Length);
                 foreach (var inp in inputs)
-                    predictions.Add(_engine!.Predict(inp).PredictedLabel);
+                    predictions.Add(_charEngine!.Predict(inp).PredictedLabel);
             }
 
             return DecodeBIOSequence(text, predictions);
@@ -121,7 +174,7 @@ namespace DocExtractor.ML.EntityExtractor
                             Type = entityType,
                             StartIndex = start,
                             EndIndex = safeEnd,
-                            Confidence = 0.8f // ML 预测置信度估算
+                            Confidence = 0.8f
                         });
                     }
                     i = end + 1;
@@ -144,7 +197,6 @@ namespace DocExtractor.ML.EntityExtractor
 
             foreach (var mlEnt in mlEntities)
             {
-                // 只添加规则未覆盖的区域
                 bool overlaps = coveredRanges.Any(r =>
                     mlEnt.StartIndex <= r.End && mlEnt.EndIndex >= r.Start);
                 if (!overlaps)
@@ -156,7 +208,8 @@ namespace DocExtractor.ML.EntityExtractor
 
         public void Dispose()
         {
-            _engine?.Dispose();
+            _wordEngine?.Dispose();
+            _charEngine?.Dispose();
         }
     }
 }

@@ -399,20 +399,20 @@ namespace DocExtractor.UI.Forms
             paramsLayout.Controls.Add(_testFractionSpinner, 5, 0);
             paramsLayout.Controls.Add(_augmentCheckbox, 6, 0);
 
-            // Row 1: 列名 + NER 参数
-            _colIterSpinner = new NumericUpDown { Minimum = 10, Maximum = 1000, Value = 200, Width = 60 };
-            _nerIterSpinner = new NumericUpDown { Minimum = 10, Maximum = 1000, Value = 200, Width = 60 };
-            _nerLeavesSpinner = new NumericUpDown { Minimum = 10, Maximum = 200, Value = 31, Width = 55 };
-            _nerLrSpinner = new NumericUpDown { Minimum = 0.01m, Maximum = 0.5m, Value = 0.1m, Width = 55, DecimalPlaces = 2, Increment = 0.01m };
+            // Row 1: 列名 + NER 参数 (NAS-BERT: Epochs + BatchSize)
+            _colEpochsSpinner = new NumericUpDown { Minimum = 1, Maximum = 50, Value = 4, Width = 55 };
+            _colBatchSpinner = new NumericUpDown { Minimum = 4, Maximum = 128, Value = 32, Width = 55 };
+            _nerEpochsSpinner = new NumericUpDown { Minimum = 1, Maximum = 50, Value = 4, Width = 55 };
+            _nerBatchSpinner = new NumericUpDown { Minimum = 4, Maximum = 128, Value = 32, Width = 55 };
 
-            paramsLayout.Controls.Add(new Label { Text = "列名迭代:", TextAlign = ContentAlignment.MiddleRight, Width = 65 }, 0, 1);
-            paramsLayout.Controls.Add(_colIterSpinner, 1, 1);
-            paramsLayout.Controls.Add(new Label { Text = "NER迭代:", TextAlign = ContentAlignment.MiddleRight, Width = 65 }, 2, 1);
-            paramsLayout.Controls.Add(_nerIterSpinner, 3, 1);
-            paramsLayout.Controls.Add(new Label { Text = "NER叶:", TextAlign = ContentAlignment.MiddleRight, Width = 55 }, 4, 1);
-            paramsLayout.Controls.Add(_nerLeavesSpinner, 5, 1);
-            paramsLayout.Controls.Add(new Label { Text = "NER率:", TextAlign = ContentAlignment.MiddleRight, Width = 50 }, 6, 1);
-            paramsLayout.Controls.Add(_nerLrSpinner, 7, 1);
+            paramsLayout.Controls.Add(new Label { Text = "列名Epoch:", TextAlign = ContentAlignment.MiddleRight, Width = 72 }, 0, 1);
+            paramsLayout.Controls.Add(_colEpochsSpinner, 1, 1);
+            paramsLayout.Controls.Add(new Label { Text = "列名Batch:", TextAlign = ContentAlignment.MiddleRight, Width = 72 }, 2, 1);
+            paramsLayout.Controls.Add(_colBatchSpinner, 3, 1);
+            paramsLayout.Controls.Add(new Label { Text = "NER Epoch:", TextAlign = ContentAlignment.MiddleRight, Width = 72 }, 4, 1);
+            paramsLayout.Controls.Add(_nerEpochsSpinner, 5, 1);
+            paramsLayout.Controls.Add(new Label { Text = "NER Batch:", TextAlign = ContentAlignment.MiddleRight, Width = 72 }, 6, 1);
+            paramsLayout.Controls.Add(_nerBatchSpinner, 7, 1);
 
             // Row 2: 章节参数
             _secTreesSpinner = new NumericUpDown { Minimum = 10, Maximum = 1000, Value = 200, Width = 60 };
@@ -433,8 +433,9 @@ namespace DocExtractor.UI.Forms
             _trainColumnBtn = new AntdUI.Button { Text = "训练列名分类器", Type = AntdUI.TTypeMini.Primary, Size = new Size(150, 36) };
             _trainNerBtn = new AntdUI.Button { Text = "训练 NER 模型", Type = AntdUI.TTypeMini.Primary, Size = new Size(140, 36) };
             _trainSectionBtn = new AntdUI.Button { Text = "训练章节标题分类器", Type = AntdUI.TTypeMini.Primary, Size = new Size(170, 36) };
+            _trainUnifiedBtn = new AntdUI.Button { Text = "训练统一模型", Type = AntdUI.TTypeMini.Primary, Size = new Size(150, 36), Font = new Font("微软雅黑", 9, FontStyle.Bold) };
             _cancelTrainBtn = new AntdUI.Button { Text = "取消训练", Type = AntdUI.TTypeMini.Error, Size = new Size(100, 36), Enabled = false };
-            trainBtnFlow.Controls.AddRange(new Control[] { _trainColumnBtn, _trainNerBtn, _trainSectionBtn, _cancelTrainBtn });
+            trainBtnFlow.Controls.AddRange(new Control[] { _trainUnifiedBtn, _trainColumnBtn, _trainNerBtn, _trainSectionBtn, _cancelTrainBtn });
 
             // ── 结果对比 ──
             _evalLabel = new Label
@@ -573,13 +574,14 @@ namespace DocExtractor.UI.Forms
         private NumericUpDown _cvFoldsSpinner;
         private NumericUpDown _testFractionSpinner;
         private CheckBox _augmentCheckbox;
-        private NumericUpDown _colIterSpinner;
-        private NumericUpDown _nerIterSpinner;
-        private NumericUpDown _nerLeavesSpinner;
-        private NumericUpDown _nerLrSpinner;
+        private NumericUpDown _colEpochsSpinner;
+        private NumericUpDown _colBatchSpinner;
+        private NumericUpDown _nerEpochsSpinner;
+        private NumericUpDown _nerBatchSpinner;
         private NumericUpDown _secTreesSpinner;
         private NumericUpDown _secLeavesSpinner;
         private NumericUpDown _secMinLeafSpinner;
+        private AntdUI.Button _trainUnifiedBtn;
 
         // 状态栏
         private StatusStrip _statusStrip;

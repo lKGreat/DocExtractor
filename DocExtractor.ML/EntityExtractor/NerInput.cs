@@ -1,3 +1,4 @@
+using System;
 using Microsoft.ML.Data;
 
 namespace DocExtractor.ML.EntityExtractor
@@ -44,5 +45,29 @@ namespace DocExtractor.ML.EntityExtractor
 
         [ColumnName("Score")]
         public float[]? Score { get; set; }
+    }
+
+    /// <summary>NER 句级训练样本（空格分词 + BIO 标签数组）用于 NAS-BERT</summary>
+    public class NerWordSample
+    {
+        [ColumnName("Sentence")]
+        public string Sentence { get; set; } = "";
+
+        [ColumnName("Label")]
+        public string[] Label { get; set; } = Array.Empty<string>();
+    }
+
+    /// <summary>NER 推理输入（仅需 Sentence）</summary>
+    public class NerWordInput
+    {
+        [ColumnName("Sentence")]
+        public string Sentence { get; set; } = "";
+    }
+
+    /// <summary>NER 推理输出</summary>
+    public class NerWordOutput
+    {
+        [ColumnName("PredictedLabel")]
+        public string[] PredictedLabel { get; set; } = Array.Empty<string>();
     }
 }

@@ -5,14 +5,14 @@ using System.Linq;
 using System.Threading;
 using Microsoft.ML;
 using Microsoft.ML.Data;
-using Microsoft.ML.Transforms.Text;
+using Microsoft.ML.TorchSharp;
 using DocExtractor.ML.Training;
 
 namespace DocExtractor.ML.ColumnClassifier
 {
     /// <summary>
     /// 列名分类器训练器
-    /// 使用 SDCA + N-gram 文本特征，支持参数化训练、交叉验证和取消
+    /// 使用 TorchSharp NAS-BERT TextClassification，支持参数化训练和取消
     /// </summary>
     public class ColumnClassifierTrainer
     {
@@ -51,32 +51,17 @@ namespace DocExtractor.ML.ColumnClassifier
             progress?.Report($"加载 {finalData.Count} 条训练数据...");
 
             var dataView = _mlContext.Data.LoadFromEnumerable(finalData);
-            var pipeline = BuildPipeline(p);
 
-            cancellation.ThrowIfCancellationRequested();
-
-            // 交叉验证
-            double cvStdDev = 0;
-            if (p.CrossValidationFolds > 1)
-            {
-                progress?.Report($"执行 {p.CrossValidationFolds} 折交叉验证...");
-                var cvResults = _mlContext.MulticlassClassification.CrossValidate(
-                    dataView, pipeline, numberOfFolds: p.CrossValidationFolds,
-                    labelColumnName: "LabelKey");
-
-                var microAccuracies = cvResults.Select(r => r.Metrics.MicroAccuracy).ToArray();
-                double mean = microAccuracies.Average();
-                cvStdDev = Math.Sqrt(microAccuracies.Select(x => (x - mean) * (x - mean)).Average());
-
-                progress?.Report($"CV 结果: Micro {mean:P2} \u00b1 {cvStdDev:P2}");
-                cancellation.ThrowIfCancellationRequested();
-            }
-
-            // 单次拆分评估
+            // 拆分训练集和验证集（NAS-BERT 使用 validationSet 参数替代 CV）
             var split = _mlContext.Data.TrainTestSplit(dataView, testFraction: p.TestFraction, seed: p.Seed);
 
-            progress?.Report($"开始训练（SDCA, 最大迭代 {p.ColumnMaxIterations}）...");
             cancellation.ThrowIfCancellationRequested();
+            progress?.Report($"构建 NAS-BERT TextClassification Pipeline (Epochs={p.ColumnEpochs}, Batch={p.ColumnBatchSize})...");
+
+            var pipeline = BuildPipeline(p, split.TestSet);
+
+            cancellation.ThrowIfCancellationRequested();
+            progress?.Report("开始训练（NAS-BERT，首次运行将下载预训练权重）...");
 
             // 用全量数据训练最终模型
             var model = pipeline.Fit(dataView);
@@ -85,7 +70,7 @@ namespace DocExtractor.ML.ColumnClassifier
             var testPredictions = model.Transform(split.TestSet);
             var metrics = _mlContext.MulticlassClassification.Evaluate(
                 testPredictions,
-                labelColumnName: "LabelKey",
+                labelColumnName: "Label",
                 predictedLabelColumnName: "PredictedLabel");
 
             cancellation.ThrowIfCancellationRequested();
@@ -104,36 +89,23 @@ namespace DocExtractor.ML.ColumnClassifier
                 SampleCount = trainData.Count,
                 AugmentedSampleCount = finalData.Count,
                 ClassCount = trainData.Select(d => d.Label).Distinct().Count(),
-                CrossValidationStdDev = cvStdDev,
-                CrossValidationFolds = p.CrossValidationFolds
+                CrossValidationStdDev = 0,
+                CrossValidationFolds = 0
             };
         }
 
-        private IEstimator<ITransformer> BuildPipeline(TrainingParameters p)
+        private IEstimator<ITransformer> BuildPipeline(TrainingParameters p, IDataView validationSet)
         {
+            // TextClassification 要求 Label 列为 Key 类型（UInt32），需先 MapValueToKey
             return _mlContext.Transforms.Conversion.MapValueToKey(
-                    outputColumnName: "LabelKey",
+                    outputColumnName: "Label",
                     inputColumnName: "Label")
-                .Append(_mlContext.Transforms.Text.FeaturizeText(
-                    outputColumnName: "Features",
-                    options: new TextFeaturizingEstimator.Options
-                    {
-                        CharFeatureExtractor = new WordBagEstimator.Options
-                        {
-                            NgramLength = 4,
-                            UseAllLengths = true
-                        },
-                        WordFeatureExtractor = new WordBagEstimator.Options
-                        {
-                            NgramLength = 2,
-                            UseAllLengths = true
-                        }
-                    },
-                    inputColumnNames: new[] { "ColumnText" }))
-                .Append(_mlContext.MulticlassClassification.Trainers.SdcaMaximumEntropy(
-                    labelColumnName: "LabelKey",
-                    featureColumnName: "Features",
-                    maximumNumberOfIterations: p.ColumnMaxIterations))
+                .Append(_mlContext.MulticlassClassification.Trainers.TextClassification(
+                    labelColumnName: "Label",
+                    sentence1ColumnName: "ColumnText",
+                    maxEpochs: p.ColumnEpochs,
+                    batchSize: p.ColumnBatchSize,
+                    validationSet: validationSet))
                 .Append(_mlContext.Transforms.Conversion.MapKeyToValue(
                     outputColumnName: "PredictedLabel",
                     inputColumnName: "PredictedLabel"));

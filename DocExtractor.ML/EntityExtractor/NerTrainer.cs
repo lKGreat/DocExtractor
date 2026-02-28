@@ -4,16 +4,15 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using Microsoft.ML;
-using Microsoft.ML.Trainers.LightGbm;
-using Microsoft.ML.Transforms.Text;
+using Microsoft.ML.TorchSharp;
+using Microsoft.ML.TorchSharp.NasBert;
 using DocExtractor.ML.Training;
 
 namespace DocExtractor.ML.EntityExtractor
 {
     /// <summary>
     /// NER 模型训练器
-    /// 输入：BIO 标注的字符级训练数据
-    /// 使用：LightGBM 梯度提升分类，支持参数化训练、交叉验证和取消
+    /// 使用 TorchSharp NAS-BERT NamedEntityRecognition，句级 BIO 标注
     /// </summary>
     public class NerTrainer
     {
@@ -36,46 +35,36 @@ namespace DocExtractor.ML.EntityExtractor
         {
             var p = parameters ?? TrainingParameters.Standard();
 
-            // 将样本展开为字符级序列
-            var charSamples = ExpandToCharLevel(annotatedSamples);
-
-            progress?.Report($"字符级样本: {charSamples.Count} 个字符标记");
-
-            if (charSamples.Count < 50)
-                throw new InvalidOperationException($"NER 训练数据不足，至少需要50个字符标注，当前 {charSamples.Count}");
+            if (annotatedSamples.Count < 20)
+                throw new InvalidOperationException($"NER 训练数据不足，至少需要20条标注文本，当前 {annotatedSamples.Count}");
 
             cancellation.ThrowIfCancellationRequested();
 
-            var dataView = _mlContext.Data.LoadFromEnumerable(charSamples);
-
-            progress?.Report($"构建 NER Pipeline (LightGBM, 迭代={p.NerIterations}, 叶={p.NerLeaves}, 率={p.NerLearningRate})...");
-
-            var pipeline = BuildPipeline(p);
+            // 将字符 span 标注转换为词级 BIO 样本
+            progress?.Report("转换标注数据为句级 BIO 格式...");
+            var wordSamples = CharSpanToWordBioConverter.ConvertAll(annotatedSamples);
+            progress?.Report($"句级样本: {wordSamples.Count} 条");
 
             cancellation.ThrowIfCancellationRequested();
 
-            // 交叉验证
-            double cvStdDev = 0;
-            if (p.CrossValidationFolds > 1)
-            {
-                progress?.Report($"执行 {p.CrossValidationFolds} 折交叉验证...");
-                var cvResults = _mlContext.MulticlassClassification.CrossValidate(
-                    dataView, pipeline, numberOfFolds: p.CrossValidationFolds,
-                    labelColumnName: "LabelKey");
+            var dataView = _mlContext.Data.LoadFromEnumerable(wordSamples);
 
-                var microAccuracies = cvResults.Select(r => r.Metrics.MicroAccuracy).ToArray();
-                double mean = microAccuracies.Average();
-                cvStdDev = Math.Sqrt(microAccuracies.Select(x => (x - mean) * (x - mean)).Average());
-
-                progress?.Report($"CV 结果: Micro {mean:P2} \u00b1 {cvStdDev:P2}");
-                cancellation.ThrowIfCancellationRequested();
-            }
-
-            // 单次拆分评估
+            // 拆分训练集和验证集
             var split = _mlContext.Data.TrainTestSplit(dataView, testFraction: p.TestFraction, seed: p.Seed);
 
-            progress?.Report("开始训练（CPU LightGBM）...");
             cancellation.ThrowIfCancellationRequested();
+            progress?.Report($"构建 NAS-BERT NER Pipeline (Epochs={p.NerEpochs}, Batch={p.NerBatchSize})...");
+
+            var pipeline = _mlContext.MulticlassClassification.Trainers.NamedEntityRecognition(
+                labelColumnName: "Label",
+                outputColumnName: "PredictedLabel",
+                sentence1ColumnName: "Sentence",
+                batchSize: p.NerBatchSize,
+                maxEpochs: p.NerEpochs,
+                validationSet: split.TestSet);
+
+            cancellation.ThrowIfCancellationRequested();
+            progress?.Report("开始训练（NAS-BERT NER，首次运行将下载预训练权重）...");
 
             // 用全量数据训练最终模型
             var model = pipeline.Fit(dataView);
@@ -84,7 +73,7 @@ namespace DocExtractor.ML.EntityExtractor
             var testPredictions = model.Transform(split.TestSet);
             var metrics = _mlContext.MulticlassClassification.Evaluate(
                 testPredictions,
-                labelColumnName: "LabelKey",
+                labelColumnName: "Label",
                 predictedLabelColumnName: "PredictedLabel");
 
             cancellation.ThrowIfCancellationRequested();
@@ -94,92 +83,23 @@ namespace DocExtractor.ML.EntityExtractor
 
             progress?.Report("NER 模型训练完成！");
 
+            // 收集 label 类型信息
+            var allLabels = wordSamples
+                .SelectMany(s => s.Label)
+                .Distinct()
+                .OrderBy(l => l)
+                .ToList();
+
             return new NerTrainingResult
             {
                 MicroAccuracy = metrics.MicroAccuracy,
                 MacroAccuracy = metrics.MacroAccuracy,
-                CharSampleCount = charSamples.Count,
+                CharSampleCount = wordSamples.Sum(s => s.Label.Length),
                 TextSampleCount = annotatedSamples.Count,
-                LabelTypes = charSamples.Select(c => c.Label).Distinct().OrderBy(l => l).ToList(),
-                CrossValidationStdDev = cvStdDev,
-                CrossValidationFolds = p.CrossValidationFolds
+                LabelTypes = allLabels,
+                CrossValidationStdDev = 0,
+                CrossValidationFolds = 0
             };
-        }
-
-        private IEstimator<ITransformer> BuildPipeline(TrainingParameters p)
-        {
-            return _mlContext.Transforms.Conversion.MapValueToKey(
-                    outputColumnName: "LabelKey",
-                    inputColumnName: "Label")
-                .Append(_mlContext.Transforms.Text.FeaturizeText(
-                    "CharTokenFeats",
-                    options: new TextFeaturizingEstimator.Options
-                    {
-                        CharFeatureExtractor = new WordBagEstimator.Options { NgramLength = 3, UseAllLengths = true },
-                        WordFeatureExtractor = null
-                    },
-                    inputColumnNames: new[] { "CharToken" }))
-                .Append(_mlContext.Transforms.Conversion.MapValueToKey("CtxL2Key", "CtxLeft2"))
-                .Append(_mlContext.Transforms.Conversion.MapValueToKey("CtxL1Key", "CtxLeft1"))
-                .Append(_mlContext.Transforms.Conversion.MapValueToKey("CtxR1Key", "CtxRight1"))
-                .Append(_mlContext.Transforms.Conversion.MapValueToKey("CtxR2Key", "CtxRight2"))
-                .Append(_mlContext.Transforms.Conversion.ConvertType("CtxL2F", "CtxL2Key", Microsoft.ML.Data.DataKind.Single))
-                .Append(_mlContext.Transforms.Conversion.ConvertType("CtxL1F", "CtxL1Key", Microsoft.ML.Data.DataKind.Single))
-                .Append(_mlContext.Transforms.Conversion.ConvertType("CtxR1F", "CtxR1Key", Microsoft.ML.Data.DataKind.Single))
-                .Append(_mlContext.Transforms.Conversion.ConvertType("CtxR2F", "CtxR2Key", Microsoft.ML.Data.DataKind.Single))
-                .Append(_mlContext.Transforms.Concatenate("Features",
-                    "CharTokenFeats", "CtxL2F", "CtxL1F", "CtxR1F", "CtxR2F", "Position"))
-                .Append(_mlContext.MulticlassClassification.Trainers.LightGbm(
-                    new LightGbmMulticlassTrainer.Options
-                    {
-                        LabelColumnName = "LabelKey",
-                        FeatureColumnName = "Features",
-                        NumberOfLeaves = p.NerLeaves,
-                        NumberOfIterations = p.NerIterations,
-                        LearningRate = p.NerLearningRate
-                    }))
-                .Append(_mlContext.Transforms.Conversion.MapKeyToValue("PredictedLabel"));
-        }
-
-        private static List<NerInput> ExpandToCharLevel(IReadOnlyList<NerAnnotation> samples)
-        {
-            var result = new List<NerInput>();
-
-            foreach (var sample in samples)
-            {
-                string text = sample.Text;
-                var chars = text.ToCharArray();
-
-                var charLabels = new string[chars.Length];
-                for (int i = 0; i < chars.Length; i++)
-                    charLabels[i] = "O";
-
-                foreach (var entity in sample.Entities)
-                {
-                    for (int i = entity.StartIndex; i <= entity.EndIndex && i < chars.Length; i++)
-                    {
-                        charLabels[i] = i == entity.StartIndex
-                            ? $"B-{entity.EntityType}"
-                            : $"I-{entity.EntityType}";
-                    }
-                }
-
-                for (int i = 0; i < chars.Length; i++)
-                {
-                    result.Add(new NerInput
-                    {
-                        CharToken = chars[i].ToString(),
-                        Position = (float)i / chars.Length,
-                        CtxLeft2 = i >= 2 ? chars[i - 2].ToString() : "[PAD]",
-                        CtxLeft1 = i >= 1 ? chars[i - 1].ToString() : "[PAD]",
-                        CtxRight1 = i + 1 < chars.Length ? chars[i + 1].ToString() : "[PAD]",
-                        CtxRight2 = i + 2 < chars.Length ? chars[i + 2].ToString() : "[PAD]",
-                        Label = charLabels[i]
-                    });
-                }
-            }
-
-            return result;
         }
     }
 

@@ -11,6 +11,7 @@ using DocExtractor.Core.Models;
 using DocExtractor.Core.Pipeline;
 using DocExtractor.Data.Export;
 using DocExtractor.Data.Repositories;
+using DocExtractor.ML;
 using DocExtractor.ML.ColumnClassifier;
 using DocExtractor.ML.EntityExtractor;
 using DocExtractor.ML.Inference;
@@ -134,6 +135,7 @@ namespace DocExtractor.UI.Forms
             _saveSplitBtn.Click += OnSaveSplitRules;
 
             // Tab 4：模型训练
+            _trainUnifiedBtn.Click += OnTrainUnified;
             _trainColumnBtn.Click += OnTrainColumnClassifier;
             _trainNerBtn.Click += OnTrainNer;
             _trainSectionBtn.Click += OnTrainSectionClassifier;
@@ -433,10 +435,10 @@ namespace DocExtractor.UI.Forms
             _cvFoldsSpinner.Enabled = isCustom;
             _testFractionSpinner.Enabled = isCustom;
             _augmentCheckbox.Enabled = isCustom;
-            _colIterSpinner.Enabled = isCustom;
-            _nerIterSpinner.Enabled = isCustom;
-            _nerLeavesSpinner.Enabled = isCustom;
-            _nerLrSpinner.Enabled = isCustom;
+            _colEpochsSpinner.Enabled = isCustom;
+            _colBatchSpinner.Enabled = isCustom;
+            _nerEpochsSpinner.Enabled = isCustom;
+            _nerBatchSpinner.Enabled = isCustom;
             _secTreesSpinner.Enabled = isCustom;
             _secLeavesSpinner.Enabled = isCustom;
             _secMinLeafSpinner.Enabled = isCustom;
@@ -459,10 +461,10 @@ namespace DocExtractor.UI.Forms
             _cvFoldsSpinner.Value = p.CrossValidationFolds;
             _testFractionSpinner.Value = (decimal)p.TestFraction;
             _augmentCheckbox.Checked = p.EnableAugmentation;
-            _colIterSpinner.Value = p.ColumnMaxIterations;
-            _nerIterSpinner.Value = p.NerIterations;
-            _nerLeavesSpinner.Value = p.NerLeaves;
-            _nerLrSpinner.Value = (decimal)p.NerLearningRate;
+            _colEpochsSpinner.Value = p.ColumnEpochs;
+            _colBatchSpinner.Value = p.ColumnBatchSize;
+            _nerEpochsSpinner.Value = p.NerEpochs;
+            _nerBatchSpinner.Value = p.NerBatchSize;
             _secTreesSpinner.Value = p.SectionTrees;
             _secLeavesSpinner.Value = p.SectionLeaves;
             _secMinLeafSpinner.Value = p.SectionMinLeaf;
@@ -475,10 +477,10 @@ namespace DocExtractor.UI.Forms
                 CrossValidationFolds = (int)_cvFoldsSpinner.Value,
                 TestFraction = (double)_testFractionSpinner.Value,
                 EnableAugmentation = _augmentCheckbox.Checked,
-                ColumnMaxIterations = (int)_colIterSpinner.Value,
-                NerIterations = (int)_nerIterSpinner.Value,
-                NerLeaves = (int)_nerLeavesSpinner.Value,
-                NerLearningRate = (double)_nerLrSpinner.Value,
+                ColumnEpochs = (int)_colEpochsSpinner.Value,
+                ColumnBatchSize = (int)_colBatchSpinner.Value,
+                NerEpochs = (int)_nerEpochsSpinner.Value,
+                NerBatchSize = (int)_nerBatchSpinner.Value,
                 SectionTrees = (int)_secTreesSpinner.Value,
                 SectionLeaves = (int)_secLeavesSpinner.Value,
                 SectionMinLeaf = (int)_secMinLeafSpinner.Value
@@ -487,6 +489,7 @@ namespace DocExtractor.UI.Forms
 
         private void SetTrainingUIState(bool training)
         {
+            _trainUnifiedBtn.Enabled = !training;
             _trainColumnBtn.Enabled = !training;
             _trainNerBtn.Enabled = !training;
             _trainSectionBtn.Enabled = !training;
@@ -744,6 +747,108 @@ namespace DocExtractor.UI.Forms
             {
                 AppendTrainLog($"\n训练失败: {ex.Message}");
                 MessageHelper.Error(this, $"训练失败：{ex.Message}");
+            }
+            finally
+            {
+                _trainCts?.Dispose();
+                _trainCts = null;
+                SetTrainingUIState(false);
+                RefreshTrainingStats();
+            }
+        }
+
+        private async void OnTrainUnified(object sender, EventArgs e)
+        {
+            SetTrainingUIState(true);
+            AppendTrainLog("========== 统一模型训练开始 ==========");
+
+            try
+            {
+                // 加载所有训练数据
+                List<(string ColumnText, string FieldName)> colSamples;
+                List<NerAnnotation> nerSamples;
+                List<DocExtractor.Data.Repositories.SectionAnnotation> secSamples;
+                using (var repo = new TrainingDataRepository(_dbPath))
+                {
+                    colSamples = repo.GetColumnSamples();
+                    nerSamples = repo.GetNerSamples();
+                    secSamples = repo.GetSectionSamples();
+                }
+
+                var colInputs = colSamples.ConvertAll(s => new ColumnInput
+                {
+                    ColumnText = s.ColumnText,
+                    Label = s.FieldName
+                });
+
+                var secInputs = secSamples.ConvertAll(s => new SectionInput
+                {
+                    Text = s.ParagraphText,
+                    IsBold = s.IsBold ? 1f : 0f,
+                    FontSize = s.FontSize,
+                    HasNumberPrefix = s.ParagraphText.Length > 0 && char.IsDigit(s.ParagraphText[0]) ? 1f : 0f,
+                    TextLength = s.ParagraphText.Length,
+                    HasHeadingStyle = s.HasHeadingStyle ? 1f : 0f,
+                    Position = 0f,
+                    IsHeading = s.IsHeading
+                });
+
+                AppendTrainLog($"数据统计 — 列名:{colInputs.Count}  NER:{nerSamples.Count}  章节:{secInputs.Count}");
+
+                var parameters = BuildTrainingParameters();
+                _trainCts = new CancellationTokenSource();
+                var ct = _trainCts.Token;
+
+                var progress = new Progress<(string Stage, string Detail, double Percent)>(info =>
+                {
+                    AppendTrainLog($"[{info.Stage}] {info.Detail}");
+                    if (info.Percent >= 0 && info.Percent <= 100)
+                    {
+                        _trainProgressBar.Style = ProgressBarStyle.Continuous;
+                        _trainProgressBar.Value = Math.Min(100, (int)info.Percent);
+                    }
+                });
+
+                var trainer = new UnifiedModelTrainer();
+                var result = await Task.Run(() =>
+                    trainer.TrainAll(colInputs, nerSamples, secInputs, _modelsDir, parameters, progress, ct));
+
+                // 重载所有模型
+                string colModelPath = Path.Combine(_modelsDir, "column_classifier.zip");
+                string nerModelPath = Path.Combine(_modelsDir, "ner_model.zip");
+                string sectionModelPath = Path.Combine(_modelsDir, "section_classifier.zip");
+                if (File.Exists(colModelPath)) _columnModel.Reload(colModelPath);
+                if (File.Exists(nerModelPath)) _nerModel.Load(nerModelPath);
+                if (File.Exists(sectionModelPath)) _sectionModel.Reload(sectionModelPath);
+
+                _evalLabel.Text = "统一训练完成";
+                AppendTrainLog($"\n========== 统一训练完成 ==========\n{result}");
+
+                // 保存训练历史
+                using (var repo = new TrainingDataRepository(_dbPath))
+                {
+                    if (result.ColumnEval != null)
+                        repo.SaveTrainingRecord("ColumnClassifier", colInputs.Count, result.ColumnEval.ToString(),
+                            JsonConvert.SerializeObject(parameters));
+                    if (result.NerEval != null)
+                        repo.SaveTrainingRecord("NER", nerSamples.Count, result.NerEval.ToString(),
+                            JsonConvert.SerializeObject(parameters));
+                    if (result.SectionEval != null)
+                        repo.SaveTrainingRecord("SectionClassifier", secInputs.Count, result.SectionEval.ToString(),
+                            JsonConvert.SerializeObject(parameters));
+                }
+
+                MessageHelper.Success(this, "统一模型训练完成！");
+            }
+            catch (OperationCanceledException)
+            {
+                AppendTrainLog("\n统一训练已取消");
+                MessageHelper.Warn(this, "训练已取消");
+            }
+            catch (Exception ex)
+            {
+                AppendTrainLog($"\n统一训练失败: {ex.Message}");
+                MessageHelper.Error(this, $"统一训练失败：{ex.Message}");
             }
             finally
             {

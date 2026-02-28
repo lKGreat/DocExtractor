@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(dotnet build:*)",
-      "Bash(dotnet:*)"
+      "Bash(dotnet:*)",
+      "WebSearch",
+      "WebFetch(domain:www.nuget.org)",
+      "Bash(python:*)"
     ]
   }
 }
