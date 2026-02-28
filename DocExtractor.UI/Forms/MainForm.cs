@@ -10,17 +10,14 @@ using DocExtractor.Core.Interfaces;
 using DocExtractor.Core.Models;
 using DocExtractor.Data.Export;
 using DocExtractor.Data.Repositories;
-using DocExtractor.ML;
 using DocExtractor.ML.ColumnClassifier;
 using DocExtractor.ML.EntityExtractor;
-using DocExtractor.ML.Recommendation;
 using DocExtractor.ML.SectionClassifier;
 using DocExtractor.ML.Training;
 using DocExtractor.UI.Helpers;
 using DocExtractor.UI.Logging;
 using DocExtractor.UI.Services;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
 
 namespace DocExtractor.UI.Forms
 {
@@ -38,6 +35,7 @@ namespace DocExtractor.UI.Forms
         private NerModel _nerModel;
         private SectionClassifierModel _sectionModel;
         private ExtractionConfigRepository _configRepo;
+        private ConfigWorkflowService _configService;
         private List<(int Id, string Name)> _configItems = new List<(int, string)>();
         private int _currentConfigId = -1;
         private CancellationTokenSource _trainCts;
@@ -45,6 +43,8 @@ namespace DocExtractor.UI.Forms
         private ILogger _logger;
         private ILogger _trainLogger;
         private readonly ExtractionWorkflowService _extractionService = new ExtractionWorkflowService();
+        private readonly TrainingWorkflowService _trainingService = new TrainingWorkflowService();
+        private readonly RecommendationService _recommendationService = new RecommendationService();
 
         public MainForm()
         {
@@ -59,7 +59,8 @@ namespace DocExtractor.UI.Forms
             TryLoadModels();
 
             _configRepo = new ExtractionConfigRepository(_dbPath);
-            _configRepo.SeedBuiltInConfigs();
+            _configService = new ConfigWorkflowService(_configRepo);
+            _configService.SeedBuiltInConfigs();
 
             InitializeComponent();
             InitializeLogging();
@@ -311,7 +312,7 @@ namespace DocExtractor.UI.Forms
 
             try
             {
-                _currentConfigId = _configRepo.Save(_currentConfig);
+                _currentConfigId = _configService.Save(_currentConfig);
                 LoadConfigList(_currentConfigId);
                 AppendLog($"配置「{_currentConfig.ConfigName}」已保存");
                 MessageHelper.Success(this, "配置已保存");
@@ -325,7 +326,7 @@ namespace DocExtractor.UI.Forms
         private void OnSetDefault(object sender, EventArgs e)
         {
             if (_currentConfigId <= 0) return;
-            _configRepo.SetDefaultConfigId(_currentConfigId);
+            _configService.SetDefaultConfigId(_currentConfigId);
             MessageHelper.Success(this, $"已将「{_currentConfig.ConfigName}」设为默认配置");
         }
 
@@ -337,7 +338,7 @@ namespace DocExtractor.UI.Forms
             try
             {
                 var config = new ExtractionConfig { ConfigName = name };
-                int id = _configRepo.Save(config);
+                int id = _configService.Save(config);
                 LoadConfigList(id);
                 MessageHelper.Success(this, $"配置「{name}」已创建");
             }
@@ -364,7 +365,7 @@ namespace DocExtractor.UI.Forms
 
             try
             {
-                _configRepo.Delete(_currentConfigId);
+                _configService.Delete(_currentConfigId);
                 LoadConfigList();
                 MessageHelper.Success(this, "配置已删除");
             }
@@ -405,7 +406,7 @@ namespace DocExtractor.UI.Forms
                     if (result != DialogResult.Yes) return;
                 }
 
-                int id = _configRepo.Save(config);
+                int id = _configService.Save(config);
                 LoadConfigList(id);
                 MessageHelper.Success(this, $"配置「{config.ConfigName}」导入成功（{config.Fields.Count} 个字段）");
             }
@@ -640,18 +641,7 @@ namespace DocExtractor.UI.Forms
 
             try
             {
-                int imported = 0;
-                using var repo = new TrainingDataRepository(_dbPath);
-
-                foreach (var line in File.ReadAllLines(dlg.FileName, System.Text.Encoding.UTF8))
-                {
-                    var parts = line.Split(',');
-                    if (parts.Length >= 2 && !string.IsNullOrWhiteSpace(parts[0]))
-                    {
-                        repo.AddColumnSample(parts[0].Trim(), parts[1].Trim(), dlg.FileName);
-                        imported++;
-                    }
-                }
+                int imported = _trainingService.ImportColumnSamples(_dbPath, dlg.FileName);
 
                 RefreshTrainingStats();
                 AppendTrainLog($"从文件导入 {imported} 条列名标注");
@@ -670,36 +660,8 @@ namespace DocExtractor.UI.Forms
 
             try
             {
-                // 加载所有训练数据
-                List<(string ColumnText, string FieldName)> colSamples;
-                List<NerAnnotation> nerSamples;
-                List<DocExtractor.Data.Repositories.SectionAnnotation> secSamples;
-                using (var repo = new TrainingDataRepository(_dbPath))
-                {
-                    colSamples = repo.GetColumnSamples();
-                    nerSamples = repo.GetNerSamples();
-                    secSamples = repo.GetSectionSamples();
-                }
-
-                var colInputs = colSamples.ConvertAll(s => new ColumnInput
-                {
-                    ColumnText = s.ColumnText,
-                    Label = s.FieldName
-                });
-
-                var secInputs = secSamples.ConvertAll(s => new SectionInput
-                {
-                    Text = s.ParagraphText,
-                    IsBold = s.IsBold ? 1f : 0f,
-                    FontSize = s.FontSize,
-                    HasNumberPrefix = s.ParagraphText.Length > 0 && char.IsDigit(s.ParagraphText[0]) ? 1f : 0f,
-                    TextLength = s.ParagraphText.Length,
-                    HasHeadingStyle = s.HasHeadingStyle ? 1f : 0f,
-                    Position = 0f,
-                    IsHeading = s.IsHeading
-                });
-
-                AppendTrainLog($"数据统计 — 列名:{colInputs.Count}  NER:{nerSamples.Count}  章节:{secInputs.Count}");
+                var bundle = _trainingService.LoadTrainingData(_dbPath);
+                AppendTrainLog($"数据统计 — 列名:{bundle.ColumnInputs.Count}  NER:{bundle.NerSamples.Count}  章节:{bundle.SectionInputs.Count}");
 
                 var parameters = BuildTrainingParameters();
                 _trainCts = new CancellationTokenSource();
@@ -715,34 +677,15 @@ namespace DocExtractor.UI.Forms
                     }
                 });
 
-                var trainer = new UnifiedModelTrainer();
                 var result = await Task.Run(() =>
-                    trainer.TrainAll(colInputs, nerSamples, secInputs, _modelsDir, parameters, progress, ct));
+                    _trainingService.TrainUnified(bundle, _modelsDir, parameters, progress, ct));
 
-                // 重载所有模型
-                string colModelPath = Path.Combine(_modelsDir, "column_classifier.zip");
-                string nerModelPath = Path.Combine(_modelsDir, "ner_model.zip");
-                string sectionModelPath = Path.Combine(_modelsDir, "section_classifier.zip");
-                if (File.Exists(colModelPath)) _columnModel.Reload(colModelPath);
-                if (File.Exists(nerModelPath)) _nerModel.Load(nerModelPath);
-                if (File.Exists(sectionModelPath)) _sectionModel.Reload(sectionModelPath);
+                _trainingService.ReloadModels(_modelsDir, _columnModel, _nerModel, _sectionModel);
 
                 _evalLabel.Text = "统一训练完成";
                 AppendTrainLog($"\n========== 统一训练完成 ==========\n{result}");
 
-                // 保存训练历史
-                using (var repo = new TrainingDataRepository(_dbPath))
-                {
-                    if (result.ColumnEval != null)
-                        repo.SaveTrainingRecord("ColumnClassifier", colInputs.Count, result.ColumnEval.ToString(),
-                            JsonConvert.SerializeObject(parameters));
-                    if (result.NerEval != null)
-                        repo.SaveTrainingRecord("NER", nerSamples.Count, result.NerEval.ToString(),
-                            JsonConvert.SerializeObject(parameters));
-                    if (result.SectionEval != null)
-                        repo.SaveTrainingRecord("SectionClassifier", secInputs.Count, result.SectionEval.ToString(),
-                            JsonConvert.SerializeObject(parameters));
-                }
+                _trainingService.SaveTrainingHistory(_dbPath, result, bundle, parameters);
 
                 MessageHelper.Success(this, "统一模型训练完成！");
             }
@@ -779,28 +722,10 @@ namespace DocExtractor.UI.Forms
 
             try
             {
-                var scanner = new WordParagraphScanner();
-                using var repo = new TrainingDataRepository(_dbPath);
-
-                foreach (var filePath in dlg.FileNames)
-                {
-                    var paragraphs = scanner.Scan(filePath);
-
-                    foreach (var p in paragraphs)
-                    {
-                        repo.AddSectionSample(
-                            p.Text,
-                            p.AutoIsHeading,
-                            p.IsBold,
-                            p.FontSize,
-                            p.HasHeadingStyle,
-                            p.OutlineLevel,
-                            filePath);
-                        imported++;
-                    }
-
-                    AppendTrainLog($"  {Path.GetFileName(filePath)}：扫描 {paragraphs.Count} 个段落");
-                }
+                var importResult = _trainingService.ImportSectionSamples(_dbPath, dlg.FileNames);
+                imported = importResult.ImportedCount;
+                foreach (var file in importResult.PerFileCounts)
+                    AppendTrainLog($"  {file.fileName}：扫描 {file.count} 个段落");
 
                 RefreshTrainingStats();
                 AppendTrainLog(
@@ -830,8 +755,7 @@ namespace DocExtractor.UI.Forms
 
                 var (colAdded, secPosAdded, secNegAdded) = await Task.Run(() =>
                 {
-                    using var repo = new TrainingDataRepository(_dbPath);
-                    return repo.GenerateFromKnowledge(configs);
+                    return _trainingService.GenerateFromKnowledge(_dbPath, configs);
                 });
 
                 RefreshTrainingStats();
@@ -882,45 +806,18 @@ namespace DocExtractor.UI.Forms
 
                 if (withGroup.Count == 0) return;
 
-                using var repo = new GroupKnowledgeRepository(_dbPath);
-
-                // 按来源文件分组，逐文件做"先清后录"（替换模式）
-                var byFile = withGroup
-                    .GroupBy(r => r.SourceFile ?? string.Empty)
-                    .ToList();
-
-                int totalGroups = 0, totalInserted = 0, replacedFiles = 0;
-
-                foreach (var fileGroup in byFile)
+                var summary = _recommendationService.AutoLearnGroupKnowledge(_dbPath, withGroup);
+                foreach (var detail in summary.FileDetails)
                 {
-                    string sourceFile = fileGroup.Key;
-
-                    // 判断是否已录入过（用于日志提示）
-                    bool wasLearned = repo.IsSourceFileLearned(sourceFile);
-
-                    // 组名 → 该文件下的记录列表
-                    var groupDict = fileGroup
-                        .GroupBy(r => r.Fields["GroupName"])
-                        .ToDictionary(
-                            g => g.Key,
-                            g => (IReadOnlyList<ExtractedRecord>)g.ToList());
-
-                    // 替换写入（内部先 DELETE 该文件旧记录，再 INSERT）
-                    int inserted = repo.ReplaceSourceFileItems(groupDict, sourceFile);
-
-                    totalGroups   += groupDict.Count;
-                    totalInserted += inserted;
-                    if (wasLearned) replacedFiles++;
-
-                    string action = wasLearned ? "更新" : "新录";
-                    AppendLog($"知识库{action}：{System.IO.Path.GetFileName(sourceFile)} " +
-                              $"→ {groupDict.Count} 个组 / {inserted} 条细则");
+                    string action = detail.WasReplaced ? "更新" : "新录";
+                    AppendLog($"知识库{action}：{System.IO.Path.GetFileName(detail.SourceFile)} " +
+                              $"→ {detail.GroupCount} 个组 / {detail.InsertedCount} 条细则");
                 }
 
-                if (replacedFiles > 0)
-                    AppendLog($"[去重] {replacedFiles} 个文件已存在旧记录，已自动清空后重新录入");
+                if (summary.ReplacedFiles > 0)
+                    AppendLog($"[去重] {summary.ReplacedFiles} 个文件已存在旧记录，已自动清空后重新录入");
 
-                AppendLog($"知识库合计学习 {totalGroups} 个组、{totalInserted} 条记录（共 {byFile.Count} 个文件）");
+                AppendLog($"知识库合计学习 {summary.TotalGroups} 个组、{summary.TotalInserted} 条记录（共 {summary.FileDetails.Count} 个文件）");
 
                 // 刷新推荐面板的组名下拉列表和知识库计数
                 RefreshRecommendCombo();
@@ -941,25 +838,9 @@ namespace DocExtractor.UI.Forms
         {
             try
             {
-                var items = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                // 从知识库获取已知组名
-                using (var repo = new GroupKnowledgeRepository(_dbPath))
-                {
-                    foreach (var g in repo.GetDistinctGroupNames())
-                        items.Add(g);
-                }
-
-                // 从当前抽取结果获取组名
-                foreach (var r in _lastResults)
-                {
-                    string gn = r.GetField("GroupName");
-                    if (!string.IsNullOrWhiteSpace(gn))
-                        items.Add(GroupKnowledgeRepository.NormalizeGroupName(gn));
-                }
-
+                var items = _recommendationService.BuildRecommendGroups(_dbPath, _lastResults);
                 _recommendGroupCombo.Items.Clear();
-                foreach (var item in items.OrderBy(x => x))
+                foreach (var item in items)
                     _recommendGroupCombo.Items.Add(item);
             }
             catch { }
@@ -978,40 +859,11 @@ namespace DocExtractor.UI.Forms
 
             try
             {
-                List<string> allGroupNames;
-                using (var repo = new GroupKnowledgeRepository(_dbPath))
-                {
-                    allGroupNames = repo.GetDistinctGroupNames();
-                    _recommendCountLabel.Text = $"知识库：{repo.GetKnowledgeCount()} 条";
-                }
+                var response = _recommendationService.Recommend(_dbPath, groupName);
+                _recommendCountLabel.Text = $"知识库：{response.KnowledgeCount} 条";
 
-                if (allGroupNames.Count == 0)
+                if (response.Items.Count == 0)
                 {
-                    _recommendHintLabel.Visible = true;
-                    _recommendGrid.Visible = false;
-                    return;
-                }
-
-                var recommender = new GroupItemRecommender();
-                // 使用回调模式获取数据，避免 ML 项目依赖 Data 项目
-                var results = recommender.Recommend(
-                    groupName,
-                    allGroupNames,
-                    gn =>
-                    {
-                        using var repo = new GroupKnowledgeRepository(_dbPath);
-                        var items = repo.GetItemsForGroup(gn);
-                        return items.ConvertAll(gi => new KnowledgeItem
-                        {
-                            ItemName = gi.ItemName,
-                            RequiredValue = gi.RequiredValue,
-                            SourceFile = gi.SourceFile
-                        });
-                    });
-
-                if (results.Count == 0)
-                {
-                    _recommendHintLabel.Text = $"未找到与「{groupName}」相似的组名。\n请先通过数据抽取积累更多文档，系统会自动学习组名与细则的对应关系。";
                     _recommendHintLabel.Visible = true;
                     _recommendGrid.Visible = false;
                     return;
@@ -1020,9 +872,9 @@ namespace DocExtractor.UI.Forms
                 _recommendHintLabel.Visible = false;
                 _recommendGrid.Visible = true;
 
-                for (int i = 0; i < results.Count; i++)
+                for (int i = 0; i < response.Items.Count; i++)
                 {
-                    var item = results[i];
+                    var item = response.Items[i];
                     int rowIdx = _recommendGrid.Rows.Add(
                         (i + 1).ToString(),
                         item.ItemName,
@@ -1042,7 +894,7 @@ namespace DocExtractor.UI.Forms
                         row.DefaultCellStyle.ForeColor = Color.Gray;                         // 灰色
                 }
 
-                AppendLog($"推荐完成：组名「{groupName}」→ {results.Count} 条推荐项");
+                AppendLog($"推荐完成：组名「{groupName}」→ {response.Items.Count} 条推荐项");
             }
             catch (Exception ex)
             {
@@ -1202,7 +1054,7 @@ namespace DocExtractor.UI.Forms
         {
             _configCombo.SelectedIndexChanged -= OnConfigComboChanged;
 
-            _configItems = _configRepo.GetAll();
+            _configItems = _configService.GetAll();
             _configCombo.Items.Clear();
             foreach (var item in _configItems)
                 _configCombo.Items.Add(item.Name);
@@ -1210,7 +1062,7 @@ namespace DocExtractor.UI.Forms
             if (_configItems.Count == 0) return;
 
             // 确定选中项
-            int targetId = selectId > 0 ? selectId : _configRepo.GetDefaultConfigId();
+            int targetId = selectId > 0 ? selectId : _configService.GetDefaultConfigId();
             int selectedIndex = 0;
             if (targetId > 0)
             {
@@ -1240,7 +1092,7 @@ namespace DocExtractor.UI.Forms
             if (idx < 0 || idx >= _configItems.Count) return;
 
             _currentConfigId = _configItems[idx].Id;
-            var config = _configRepo.GetById(_currentConfigId);
+            var config = _configService.GetById(_currentConfigId);
             if (config != null)
             {
                 _currentConfig = config;
