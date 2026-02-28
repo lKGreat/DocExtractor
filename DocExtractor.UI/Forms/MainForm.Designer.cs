@@ -225,7 +225,10 @@ namespace DocExtractor.UI.Forms
 
             var configBtnPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 42 };
             _saveConfigBtn = new AntdUI.Button { Text = "保存配置", Type = AntdUI.TTypeMini.Primary, Size = new Size(100, 34) };
-            configBtnPanel.Controls.Add(_saveConfigBtn);
+            _setDefaultBtn = new AntdUI.Button { Text = "设为默认", Size = new Size(100, 34) };
+            _newConfigBtn = new AntdUI.Button { Text = "新建配置", Size = new Size(100, 34) };
+            _deleteConfigBtn = new AntdUI.Button { Text = "删除配置", Type = AntdUI.TTypeMini.Error, Size = new Size(100, 34) };
+            configBtnPanel.Controls.AddRange(new Control[] { _saveConfigBtn, _setDefaultBtn, _newConfigBtn, _deleteConfigBtn });
 
             configSplit.Panel1.Controls.Add(_fieldsGrid);
             configSplit.Panel2.Controls.Add(settingsPanel);
@@ -375,6 +378,9 @@ namespace DocExtractor.UI.Forms
         private NumericUpDown _headerRowsSpinner;
         private ComboBox _columnMatchCombo;
         private AntdUI.Button _saveConfigBtn;
+        private AntdUI.Button _setDefaultBtn;
+        private AntdUI.Button _newConfigBtn;
+        private AntdUI.Button _deleteConfigBtn;
 
         // Tab 3：拆分规则
         private DataGridView _splitGrid;

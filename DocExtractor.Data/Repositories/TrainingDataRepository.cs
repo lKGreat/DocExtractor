@@ -130,6 +130,10 @@ CREATE TABLE IF NOT EXISTS ExtractionConfig (
     ConfigJson TEXT NOT NULL,
     CreatedAt TEXT DEFAULT (datetime('now')),
     UpdatedAt TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS AppSettings (
+    Key TEXT PRIMARY KEY,
+    Value TEXT
 );";
     }
 }

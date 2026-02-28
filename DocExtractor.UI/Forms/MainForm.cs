@@ -25,12 +25,15 @@ namespace DocExtractor.UI.Forms
     public partial class MainForm : Form
     {
         // ── 状态 ─────────────────────────────────────────────────────────────
-        private ExtractionConfig _currentConfig = CreateDefaultConfig();
+        private ExtractionConfig _currentConfig = new ExtractionConfig();
         private List<ExtractedRecord> _lastResults = new List<ExtractedRecord>();
         private readonly string _dbPath;
         private readonly string _modelsDir;
         private ColumnClassifierModel _columnModel;
         private NerModel _nerModel;
+        private ExtractionConfigRepository _configRepo;
+        private List<(int Id, string Name)> _configItems = new List<(int, string)>();
+        private int _currentConfigId = -1;
 
         public MainForm()
         {
@@ -42,6 +45,9 @@ namespace DocExtractor.UI.Forms
             _columnModel = new ColumnClassifierModel();
             _nerModel = new NerModel();
             TryLoadModels();
+
+            _configRepo = new ExtractionConfigRepository(_dbPath);
+            _configRepo.SeedBuiltInConfigs();
 
             InitializeComponent();
             WireEvents();
@@ -76,10 +82,13 @@ namespace DocExtractor.UI.Forms
                 if (files != null) AddFiles(files);
             };
 
-            _configCombo.SelectedIndexChanged += (s, e) => LoadSelectedConfig();
+            // Config combo event is wired in LoadConfigList()
 
             // Tab 2：字段配置
             _saveConfigBtn.Click += OnSaveConfig;
+            _setDefaultBtn.Click += OnSetDefault;
+            _newConfigBtn.Click += OnNewConfig;
+            _deleteConfigBtn.Click += OnDeleteConfig;
 
             // Tab 3：拆分规则
             _saveSplitBtn.Click += OnSaveSplitRules;
@@ -211,8 +220,70 @@ namespace DocExtractor.UI.Forms
         {
             SaveFieldsFromGrid();
             SaveGlobalSettings();
-            AppendLog("字段配置已保存");
-            MessageHelper.Success(this, "字段配置已保存");
+
+            try
+            {
+                _currentConfigId = _configRepo.Save(_currentConfig);
+                LoadConfigList(_currentConfigId);
+                AppendLog($"配置「{_currentConfig.ConfigName}」已保存");
+                MessageHelper.Success(this, "配置已保存");
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"保存失败：{ex.Message}");
+            }
+        }
+
+        private void OnSetDefault(object sender, EventArgs e)
+        {
+            if (_currentConfigId <= 0) return;
+            _configRepo.SetDefaultConfigId(_currentConfigId);
+            MessageHelper.Success(this, $"已将「{_currentConfig.ConfigName}」设为默认配置");
+        }
+
+        private void OnNewConfig(object sender, EventArgs e)
+        {
+            string name = ShowInputDialog("新建配置", "请输入新配置名称：", "自定义配置");
+            if (string.IsNullOrWhiteSpace(name)) return;
+
+            try
+            {
+                var config = new ExtractionConfig { ConfigName = name };
+                int id = _configRepo.Save(config);
+                LoadConfigList(id);
+                MessageHelper.Success(this, $"配置「{name}」已创建");
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"创建失败：{ex.Message}");
+            }
+        }
+
+        private void OnDeleteConfig(object sender, EventArgs e)
+        {
+            if (_currentConfigId <= 0) return;
+
+            if (BuiltInConfigs.BuiltInNames.Contains(_currentConfig.ConfigName))
+            {
+                MessageHelper.Warn(this, "内置配置不可删除");
+                return;
+            }
+
+            var result = MessageBox.Show(
+                $"确定要删除配置「{_currentConfig.ConfigName}」吗？此操作不可恢复。",
+                "确认删除", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (result != DialogResult.Yes) return;
+
+            try
+            {
+                _configRepo.Delete(_currentConfigId);
+                LoadConfigList();
+                MessageHelper.Success(this, "配置已删除");
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"删除失败：{ex.Message}");
+            }
         }
 
         private void SaveFieldsFromGrid()
@@ -502,22 +573,54 @@ namespace DocExtractor.UI.Forms
             _trainLogBox.ScrollToCaret();
         }
 
-        private void LoadConfigList()
+        private void LoadConfigList(int selectId = -1)
         {
+            _configCombo.SelectedIndexChanged -= OnConfigComboChanged;
+
+            _configItems = _configRepo.GetAll();
             _configCombo.Items.Clear();
-            _configCombo.Items.Add("遥测/遥控配置");
-            _configCombo.Items.Add("通用表格模式");
-            _configCombo.SelectedIndex = 0;
+            foreach (var item in _configItems)
+                _configCombo.Items.Add(item.Name);
+
+            if (_configItems.Count == 0) return;
+
+            // 确定选中项
+            int targetId = selectId > 0 ? selectId : _configRepo.GetDefaultConfigId();
+            int selectedIndex = 0;
+            if (targetId > 0)
+            {
+                for (int i = 0; i < _configItems.Count; i++)
+                {
+                    if (_configItems[i].Id == targetId)
+                    {
+                        selectedIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            _configCombo.SelectedIndex = selectedIndex;
+            _configCombo.SelectedIndexChanged += OnConfigComboChanged;
+            LoadSelectedConfig();
+        }
+
+        private void OnConfigComboChanged(object sender, EventArgs e)
+        {
+            LoadSelectedConfig();
         }
 
         private void LoadSelectedConfig()
         {
-            if (_configCombo.SelectedIndex == 0)
-                _currentConfig = CreateTelemetryConfig();
-            else
-                _currentConfig = CreateDefaultConfig();
+            int idx = _configCombo.SelectedIndex;
+            if (idx < 0 || idx >= _configItems.Count) return;
 
-            LoadConfigToGrids();
+            _currentConfigId = _configItems[idx].Id;
+            var config = _configRepo.GetById(_currentConfigId);
+            if (config != null)
+            {
+                _currentConfig = config;
+                LoadConfigToGrids();
+            }
         }
 
         private void LoadConfigToGrids()
@@ -579,65 +682,23 @@ namespace DocExtractor.UI.Forms
             catch { }
         }
 
-        // ── 内置配置模板 ──────────────────────────────────────────────────────
-
-        private static ExtractionConfig CreateDefaultConfig() => new ExtractionConfig
+        private static string ShowInputDialog(string title, string prompt, string defaultValue)
         {
-            ConfigName = "默认配置",
-            Fields = new List<FieldDefinition>(),
-            HeaderRowCount = 1
-        };
-
-        private static ExtractionConfig CreateTelemetryConfig() => new ExtractionConfig
-        {
-            ConfigName = "遥测解析配置",
-            HeaderRowCount = 1,
-            ColumnMatch = ColumnMatchMode.HybridMlFirst,
-            Fields = new List<FieldDefinition>
+            using var form = new Form
             {
-                new FieldDefinition { FieldName = "Index", DisplayName = "序号",
-                    KnownColumnVariants = new List<string> { "序号", "No.", "编号" } },
-                new FieldDefinition { FieldName = "System", DisplayName = "所属系统",
-                    KnownColumnVariants = new List<string> { "所属系统", "系统", "System" } },
-                new FieldDefinition { FieldName = "APID", DisplayName = "APID值", DataType = FieldDataType.HexCode,
-                    KnownColumnVariants = new List<string> { "APID值", "APID", "应用标识" }, IsRequired = true },
-                new FieldDefinition { FieldName = "StartByte", DisplayName = "起始字节", DataType = FieldDataType.Integer,
-                    KnownColumnVariants = new List<string> { "起始字节", "起始字节序号", "开始字节" }, IsRequired = true },
-                new FieldDefinition { FieldName = "BitOffset", DisplayName = "起始位",
-                    KnownColumnVariants = new List<string> { "起始位", "起始比特" } },
-                new FieldDefinition { FieldName = "BitLength", DisplayName = "位长度", DataType = FieldDataType.Integer,
-                    KnownColumnVariants = new List<string> { "位长度", "字节长度", "比特数", "长度" }, IsRequired = true },
-                new FieldDefinition { FieldName = "ChannelName", DisplayName = "波道名称",
-                    KnownColumnVariants = new List<string> { "波道名称", "参数名称", "通道名称", "名称" }, IsRequired = true },
-                new FieldDefinition { FieldName = "TelemetryCode", DisplayName = "遥测代号",
-                    KnownColumnVariants = new List<string> { "遥测代号", "参数代号", "代号", "标识" }, IsRequired = true },
-                new FieldDefinition { FieldName = "Endianness", DisplayName = "字节端序",
-                    KnownColumnVariants = new List<string> { "字节端序", "端序", "大小端" } },
-                new FieldDefinition { FieldName = "FormulaType", DisplayName = "公式类型",
-                    KnownColumnVariants = new List<string> { "公式类型", "转换类型", "类型" } },
-                new FieldDefinition { FieldName = "CoeffA", DisplayName = "系数A", DataType = FieldDataType.Decimal,
-                    KnownColumnVariants = new List<string> { "A", "系数A", "公式系数/A" } },
-                new FieldDefinition { FieldName = "CoeffB", DisplayName = "系数B", DataType = FieldDataType.Decimal,
-                    KnownColumnVariants = new List<string> { "B", "系数B", "公式系数/B" } },
-                new FieldDefinition { FieldName = "Precision", DisplayName = "小数位数", DataType = FieldDataType.Integer,
-                    KnownColumnVariants = new List<string> { "小数位数", "精度", "小数位" } },
-                new FieldDefinition { FieldName = "Unit", DisplayName = "量纲",
-                    KnownColumnVariants = new List<string> { "量纲", "单位", "工程量纲" } },
-                new FieldDefinition { FieldName = "EnumMap", DisplayName = "枚举解译",
-                    KnownColumnVariants = new List<string> { "枚举解译", "离散值", "枚举值", "状态描述" },
-                    DataType = FieldDataType.Enumeration }
-            },
-            SplitRules = new List<SplitRule>
-            {
-                new SplitRule
-                {
-                    RuleName = "枚举值展开",
-                    Type = SplitType.SubTableExpand,
-                    TriggerColumn = "EnumMap",
-                    InheritParentFields = true,
-                    Priority = 10
-                }
-            }
-        };
+                Text = title, Width = 400, Height = 160,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                StartPosition = FormStartPosition.CenterParent,
+                MaximizeBox = false, MinimizeBox = false
+            };
+            var label = new Label { Text = prompt, Left = 12, Top = 16, Width = 360 };
+            var textBox = new TextBox { Text = defaultValue, Left = 12, Top = 42, Width = 360 };
+            var okBtn = new Button { Text = "确定", DialogResult = DialogResult.OK, Left = 210, Top = 78, Width = 75 };
+            var cancelBtn = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Left = 295, Top = 78, Width = 75 };
+            form.Controls.AddRange(new Control[] { label, textBox, okBtn, cancelBtn });
+            form.AcceptButton = okBtn;
+            form.CancelButton = cancelBtn;
+            return form.ShowDialog() == DialogResult.OK ? textBox.Text.Trim() : string.Empty;
+        }
     }
 }

@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS ExtractionConfig (
     UpdatedAt   TEXT DEFAULT (datetime('now'))
 );
 
+-- 应用设置（键值对存储，如默认配置ID）
+CREATE TABLE IF NOT EXISTS AppSettings (
+    Key         TEXT PRIMARY KEY,
+    Value       TEXT
+);
+
 -- 抽取任务历史
 CREATE TABLE IF NOT EXISTS ExtractionJob (
     Id          INTEGER PRIMARY KEY AUTOINCREMENT,
