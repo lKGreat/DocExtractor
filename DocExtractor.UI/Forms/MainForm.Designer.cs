@@ -422,6 +422,14 @@ namespace DocExtractor.UI.Forms
             _nerSampleCountLabel = new Label { Text = "NER 标注样本：0 条", Width = 200, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
             _sectionSampleCountLabel = new Label { Text = "章节标题样本：0 条", Width = 200, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
             _knowledgeCountLabel = new Label { Text = "推荐知识库：0 条", Width = 200, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
+            _modelHealthLabel = new Label
+            {
+                Text = "模型健康度：--",
+                Width = 760,
+                Height = 30,
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = Color.FromArgb(32, 32, 32)
+            };
             _importCsvBtn = new AntdUI.Button { Text = "导入 CSV/Excel 标注", Size = new Size(160, 30) };
             _importSectionWordBtn = new AntdUI.Button { Text = "从 Word 导入章节标注", Size = new Size(170, 30) };
             _genFromKnowledgeBtn = new AntdUI.Button
@@ -434,6 +442,7 @@ namespace DocExtractor.UI.Forms
             {
                 _colSampleCountLabel, _nerSampleCountLabel,
                 _sectionSampleCountLabel, _knowledgeCountLabel,
+                _modelHealthLabel,
                 _genFromKnowledgeBtn, _importCsvBtn, _importSectionWordBtn
             });
             statsGroup.Controls.Add(statsFlow);
@@ -622,6 +631,7 @@ namespace DocExtractor.UI.Forms
         private Label _nerSampleCountLabel;
         private Label _sectionSampleCountLabel;
         private Label _knowledgeCountLabel;
+        private Label _modelHealthLabel;
         private AntdUI.Button _cancelTrainBtn;
         private AntdUI.Button _genFromKnowledgeBtn;
         private AntdUI.Button _importCsvBtn;

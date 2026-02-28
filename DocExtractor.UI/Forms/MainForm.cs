@@ -1242,9 +1242,35 @@ namespace DocExtractor.UI.Forms
             try
             {
                 using var repo = new TrainingDataRepository(_dbPath);
-                _colSampleCountLabel.Text = $"列名分类样本：{repo.GetColumnSampleCount()} 条";
-                _nerSampleCountLabel.Text = $"NER 标注样本：{repo.GetNerSampleCount()} 条";
-                _sectionSampleCountLabel.Text = $"章节标题样本：{repo.GetSectionSampleCount()} 条";
+                int colCount = repo.GetColumnSampleCount();
+                int nerCount = repo.GetNerSampleCount();
+                int sectionCount = repo.GetSectionSampleCount();
+
+                _colSampleCountLabel.Text = $"列名分类样本：{colCount} 条";
+                _nerSampleCountLabel.Text = $"NER 标注样本：{nerCount} 条";
+                _sectionSampleCountLabel.Text = $"章节标题样本：{sectionCount} 条";
+
+                var colLatest = repo.GetLatestRecord("ColumnClassifier");
+                var nerLatest = repo.GetLatestRecord("NER");
+                var sectionLatest = repo.GetLatestRecord("SectionClassifier");
+
+                string columnHealth = ComputeModelHealth(
+                    File.Exists(Path.Combine(_modelsDir, "column_classifier.zip")),
+                    colCount,
+                    10,
+                    TryExtractAccuracy(colLatest?.MetricsJson));
+                string nerHealth = ComputeModelHealth(
+                    File.Exists(Path.Combine(_modelsDir, "ner_model.zip")),
+                    nerCount,
+                    20,
+                    TryExtractAccuracy(nerLatest?.MetricsJson));
+                string sectionHealth = ComputeModelHealth(
+                    File.Exists(Path.Combine(_modelsDir, "section_classifier.zip")),
+                    sectionCount,
+                    20,
+                    TryExtractAccuracy(sectionLatest?.MetricsJson));
+
+                _modelHealthLabel.Text = $"模型健康度：列名[{columnHealth}]  NER[{nerHealth}]  章节[{sectionHealth}]";
             }
             catch { }
 
@@ -1256,6 +1282,28 @@ namespace DocExtractor.UI.Forms
                 _recommendCountLabel.Text = $"知识库：{count} 条";
             }
             catch { }
+        }
+
+        private static string ComputeModelHealth(bool modelExists, int sampleCount, int minSamples, double? accuracy)
+        {
+            if (!modelExists) return "未训练";
+            if (sampleCount < minSamples) return "待提升";
+            if (accuracy.HasValue)
+            {
+                if (accuracy.Value >= 0.95 && sampleCount >= 100) return "优秀";
+                if (accuracy.Value >= 0.90) return "良好";
+            }
+            return "可用";
+        }
+
+        private static double? TryExtractAccuracy(string? metricsText)
+        {
+            if (string.IsNullOrWhiteSpace(metricsText)) return null;
+            var match = System.Text.RegularExpressions.Regex.Match(metricsText, @"(\d+(?:\.\d+)?)%");
+            if (!match.Success) return null;
+            if (double.TryParse(match.Groups[1].Value, out var pct))
+                return pct / 100.0;
+            return null;
         }
 
         private void TryLoadModels()
