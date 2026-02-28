@@ -112,7 +112,7 @@ namespace DocExtractor.UI.Forms
             _fileListBox = new ListBox
             {
                 Dock = DockStyle.Fill,
-                SelectionMode = SelectionMode.MultiSimple,
+                SelectionMode = SelectionMode.MultiExtended,
                 HorizontalScrollbar = true
             };
             _fileListBox.AllowDrop = true;

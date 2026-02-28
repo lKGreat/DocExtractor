@@ -178,16 +178,17 @@ namespace DocExtractor.UI.Forms
                         AppendLog($"[警告] {Path.GetFileName(r.SourceFile)}: {w}");
 
                 _lastResults = results.SelectMany(r => r.Records).ToList();
-                ShowResults(_lastResults, config.Fields);
+                var completeResults = _lastResults.Where(r => r.IsComplete).ToList();
+                ShowResults(completeResults, config.Fields);
 
                 int total = _lastResults.Count;
-                int complete = _lastResults.Count(r => r.IsComplete);
-                AppendLog($"\n完成！共抽取 {total} 条记录（完整: {complete}，不完整: {total - complete}）");
-                _statusBarLabel.Text = $"完成 | {total} 条记录";
-                _exportBtn.Enabled = total > 0;
+                int complete = completeResults.Count;
+                AppendLog($"\n完成！共抽取 {total} 条记录（完整: {complete}，不完整: {total - complete}，列表仅显示完整记录）");
+                _statusBarLabel.Text = $"完成 | 完整 {complete}/{total} 条记录";
+                _exportBtn.Enabled = complete > 0;
 
-                if (total > 0)
-                    MessageHelper.Success(this, $"抽取完成，共 {total} 条记录");
+                if (complete > 0)
+                    MessageHelper.Success(this, $"抽取完成，共 {total} 条（完整 {complete} 条已显示）");
                 else if (results.Any(r => !r.Success))
                     MessageHelper.Error(this, $"抽取失败：{results.First(r => !r.Success).ErrorMessage}");
                 else
@@ -207,7 +208,8 @@ namespace DocExtractor.UI.Forms
 
         private void OnExport(object sender, EventArgs e)
         {
-            if (_lastResults.Count == 0) return;
+            var toExport = _lastResults.Where(r => r.IsComplete).ToList();
+            if (toExport.Count == 0) return;
 
             using var dlg = new SaveFileDialog
             {
@@ -220,7 +222,7 @@ namespace DocExtractor.UI.Forms
                 try
                 {
                     var exporter = new ExcelExporter();
-                    exporter.Export(_lastResults, _currentConfig.Fields, dlg.FileName);
+                    exporter.Export(toExport, _currentConfig.Fields, dlg.FileName);
                     AppendLog($"已导出到: {dlg.FileName}");
                     MessageHelper.Success(this, "导出成功！");
                 }
