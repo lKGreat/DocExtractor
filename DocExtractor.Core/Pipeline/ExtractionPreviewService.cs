@@ -6,6 +6,7 @@ using DocExtractor.Core.Exceptions;
 using DocExtractor.Core.Interfaces;
 using DocExtractor.Core.Models;
 using DocExtractor.Core.Models.Preview;
+using DocExtractor.Core.Schema;
 
 namespace DocExtractor.Core.Pipeline
 {
@@ -16,6 +17,7 @@ namespace DocExtractor.Core.Pipeline
     {
         private readonly IReadOnlyList<IDocumentParser> _parsers;
         private readonly IColumnNormalizer _columnNormalizer;
+        private readonly TableSchemaDetector _schemaDetector;
 
         public ExtractionPreviewService(
             IReadOnlyList<IDocumentParser> parsers,
@@ -23,6 +25,7 @@ namespace DocExtractor.Core.Pipeline
         {
             _parsers = parsers;
             _columnNormalizer = columnNormalizer;
+            _schemaDetector = new TableSchemaDetector();
         }
 
         public ExtractionPreviewResult Preview(string filePath, ExtractionConfig config)
@@ -70,6 +73,17 @@ namespace DocExtractor.Core.Pipeline
                         RowCount = table.RowCount,
                         ColCount = table.ColCount
                     };
+
+                    var schema = _schemaDetector.Detect(table);
+                    tablePreview.SchemaType = schema.SchemaType;
+                    tablePreview.SuggestedHeaderRowCount = schema.SuggestedHeaderRowCount;
+                    tablePreview.SchemaConfidence = schema.Confidence;
+                    tablePreview.SchemaReason = schema.Reason;
+                    if (schema.SuggestedHeaderRowCount != config.HeaderRowCount)
+                    {
+                        result.Warnings.Add(
+                            $"表格{table.TableIndex + 1} 结构建议表头行数 {schema.SuggestedHeaderRowCount}（当前配置 {config.HeaderRowCount}）");
+                    }
 
                     if (table.RowCount > 0)
                     {

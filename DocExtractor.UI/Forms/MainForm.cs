@@ -232,7 +232,9 @@ namespace DocExtractor.UI.Forms
                 {
                     int mapped = table.Columns.Count(c => !string.IsNullOrWhiteSpace(c.MappedFieldName));
                     int lowConfidence = table.Columns.Count(c => c.IsLowConfidence);
-                    AppendLog($"  表格{table.TableIndex + 1} ({table.RowCount}x{table.ColCount}) 匹配列 {mapped}/{table.Columns.Count}，低置信度 {lowConfidence}");
+                    AppendLog($"  表格{table.TableIndex + 1} ({table.RowCount}x{table.ColCount}) " +
+                              $"结构={table.SchemaType} 建议表头={table.SuggestedHeaderRowCount} " +
+                              $"匹配列 {mapped}/{table.Columns.Count}，低置信度 {lowConfidence}");
                 }
 
                 foreach (var warning in preview.Warnings.Take(10))
