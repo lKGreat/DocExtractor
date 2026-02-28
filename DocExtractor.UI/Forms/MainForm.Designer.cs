@@ -472,48 +472,59 @@ namespace DocExtractor.UI.Forms
             paramsLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             paramsLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             paramsLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+            // 固定宽度列：label(82) + control(66) 交替，最后两列吸收剩余空间
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));   // col0 label
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 66));   // col1 control
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));   // col2 label
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 66));   // col3 control
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));   // col4 label
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 66));   // col5 control
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));   // col6 label
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 66));   // col7 control
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));   // col8 overflow/checkbox
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 0));    // col9 reserved
 
             // Row 0: 预设选择
-            _presetCombo = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDownList };
+            _presetCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
             _presetCombo.Items.AddRange(new object[] { "快速", "标准", "精细", "自定义" });
             _presetCombo.SelectedIndex = 1;
-            _cvFoldsSpinner = new NumericUpDown { Minimum = 0, Maximum = 10, Value = 5, Width = 55 };
-            _testFractionSpinner = new NumericUpDown { Minimum = 0.1m, Maximum = 0.5m, Value = 0.2m, Width = 55, DecimalPlaces = 1, Increment = 0.1m };
-            _augmentCheckbox = new CheckBox { Text = "数据增强", AutoSize = true, Checked = false };
+            _cvFoldsSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 0, Maximum = 10, Value = 5 };
+            _testFractionSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 0.1m, Maximum = 0.5m, Value = 0.2m, DecimalPlaces = 1, Increment = 0.1m };
+            _augmentCheckbox = new CheckBox { Text = "数据增强", AutoSize = true, Checked = false, Anchor = AnchorStyles.Left | AnchorStyles.Top };
 
-            paramsLayout.Controls.Add(new Label { Text = "预设:", TextAlign = ContentAlignment.MiddleRight, Width = 45 }, 0, 0);
+            paramsLayout.Controls.Add(new Label { Text = "预设:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 0, 0);
             paramsLayout.Controls.Add(_presetCombo, 1, 0);
-            paramsLayout.Controls.Add(new Label { Text = "CV折数:", TextAlign = ContentAlignment.MiddleRight, Width = 55 }, 2, 0);
+            paramsLayout.Controls.Add(new Label { Text = "CV折数:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 2, 0);
             paramsLayout.Controls.Add(_cvFoldsSpinner, 3, 0);
-            paramsLayout.Controls.Add(new Label { Text = "测试集:", TextAlign = ContentAlignment.MiddleRight, Width = 55 }, 4, 0);
+            paramsLayout.Controls.Add(new Label { Text = "测试集:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 4, 0);
             paramsLayout.Controls.Add(_testFractionSpinner, 5, 0);
             paramsLayout.Controls.Add(_augmentCheckbox, 6, 0);
 
             // Row 1: 列名 + NER 参数 (NAS-BERT: Epochs + BatchSize)
-            _colEpochsSpinner = new NumericUpDown { Minimum = 1, Maximum = 50, Value = 4, Width = 55 };
-            _colBatchSpinner = new NumericUpDown { Minimum = 4, Maximum = 128, Value = 32, Width = 55 };
-            _nerEpochsSpinner = new NumericUpDown { Minimum = 1, Maximum = 50, Value = 4, Width = 55 };
-            _nerBatchSpinner = new NumericUpDown { Minimum = 4, Maximum = 128, Value = 32, Width = 55 };
+            _colEpochsSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 1, Maximum = 50, Value = 4 };
+            _colBatchSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 4, Maximum = 128, Value = 32 };
+            _nerEpochsSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 1, Maximum = 50, Value = 4 };
+            _nerBatchSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 4, Maximum = 128, Value = 32 };
 
-            paramsLayout.Controls.Add(new Label { Text = "列名Epoch:", TextAlign = ContentAlignment.MiddleRight, Width = 72 }, 0, 1);
+            paramsLayout.Controls.Add(new Label { Text = "列名 Epoch:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 0, 1);
             paramsLayout.Controls.Add(_colEpochsSpinner, 1, 1);
-            paramsLayout.Controls.Add(new Label { Text = "列名Batch:", TextAlign = ContentAlignment.MiddleRight, Width = 72 }, 2, 1);
+            paramsLayout.Controls.Add(new Label { Text = "列名 Batch:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 2, 1);
             paramsLayout.Controls.Add(_colBatchSpinner, 3, 1);
-            paramsLayout.Controls.Add(new Label { Text = "NER Epoch:", TextAlign = ContentAlignment.MiddleRight, Width = 72 }, 4, 1);
+            paramsLayout.Controls.Add(new Label { Text = "NER Epoch:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 4, 1);
             paramsLayout.Controls.Add(_nerEpochsSpinner, 5, 1);
-            paramsLayout.Controls.Add(new Label { Text = "NER Batch:", TextAlign = ContentAlignment.MiddleRight, Width = 72 }, 6, 1);
+            paramsLayout.Controls.Add(new Label { Text = "NER Batch:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 6, 1);
             paramsLayout.Controls.Add(_nerBatchSpinner, 7, 1);
 
             // Row 2: 章节参数
-            _secTreesSpinner = new NumericUpDown { Minimum = 10, Maximum = 1000, Value = 200, Width = 60 };
-            _secLeavesSpinner = new NumericUpDown { Minimum = 5, Maximum = 100, Value = 20, Width = 55 };
-            _secMinLeafSpinner = new NumericUpDown { Minimum = 1, Maximum = 20, Value = 2, Width = 55 };
+            _secTreesSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 10, Maximum = 1000, Value = 200 };
+            _secLeavesSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 5, Maximum = 100, Value = 20 };
+            _secMinLeafSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 1, Maximum = 20, Value = 2 };
 
-            paramsLayout.Controls.Add(new Label { Text = "章节树数:", TextAlign = ContentAlignment.MiddleRight, Width = 65 }, 0, 2);
+            paramsLayout.Controls.Add(new Label { Text = "章节树数:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 0, 2);
             paramsLayout.Controls.Add(_secTreesSpinner, 1, 2);
-            paramsLayout.Controls.Add(new Label { Text = "章节叶:", TextAlign = ContentAlignment.MiddleRight, Width = 55 }, 2, 2);
+            paramsLayout.Controls.Add(new Label { Text = "章节叶:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 2, 2);
             paramsLayout.Controls.Add(_secLeavesSpinner, 3, 2);
-            paramsLayout.Controls.Add(new Label { Text = "最小叶样本:", TextAlign = ContentAlignment.MiddleRight, Width = 80 }, 4, 2);
+            paramsLayout.Controls.Add(new Label { Text = "最小叶样本:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 4, 2);
             paramsLayout.Controls.Add(_secMinLeafSpinner, 5, 2);
 
             paramsGroup.Controls.Add(paramsLayout);

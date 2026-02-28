@@ -4,9 +4,9 @@ using DocExtractor.UI.Services;
 
 namespace DocExtractor.UI.Forms
 {
-    public partial class ColumnErrorAnalysisForm : Form
+    internal partial class ColumnErrorAnalysisForm : Form
     {
-        public ColumnErrorAnalysisForm(IReadOnlyList<ColumnErrorAnalysisItem> items)
+        internal ColumnErrorAnalysisForm(IReadOnlyList<ColumnErrorAnalysisItem> items)
         {
             InitializeComponent();
             LoadItems(items);

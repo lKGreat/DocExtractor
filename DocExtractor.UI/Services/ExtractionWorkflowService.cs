@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using DocExtractor.Core.Interfaces;
 using DocExtractor.Core.Models;
