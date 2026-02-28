@@ -96,10 +96,17 @@ namespace DocExtractor.UI.Controls
             this._configSplit.Panel1.Controls.Add(this._fieldsGrid);
 
             // ── Global Settings ───────────────────────────────────────────────
+            this._timeAxisCheckBox = new CheckBox();
+            this._timeAxisToleranceLabel = new Label();
+            this._timeAxisToleranceSpinner = new NumericUpDown();
+
+            ((System.ComponentModel.ISupportInitialize)this._timeAxisToleranceSpinner).BeginInit();
+
             this._settingsPanel.Dock = DockStyle.Fill;
             this._settingsPanel.ColumnCount = 4;
-            this._settingsPanel.RowCount = 3;
+            this._settingsPanel.RowCount = 4;
             this._settingsPanel.Padding = new Padding(8);
+            this._settingsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             this._settingsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             this._settingsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             this._settingsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
@@ -134,6 +141,28 @@ namespace DocExtractor.UI.Controls
             this._settingsPanel.Controls.Add(this._valueCleaningCheckBox, 0, 2);
             this._settingsPanel.SetColumnSpan(this._valueCleaningCheckBox, 2);
             this._settingsPanel.Controls.Add(this._cleaningRulesBtn, 2, 2);
+
+            this._timeAxisCheckBox.Text = "启用时间轴展开（自动检测多步/跳变/阈值模式）";
+            this._timeAxisCheckBox.Checked = false;
+            this._timeAxisCheckBox.AutoSize = true;
+
+            this._timeAxisToleranceLabel.Text = "公差 ±";
+            this._timeAxisToleranceLabel.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
+            this._timeAxisToleranceLabel.Width = 50;
+
+            this._timeAxisToleranceSpinner.DecimalPlaces = 2;
+            this._timeAxisToleranceSpinner.Increment = 0.1M;
+            this._timeAxisToleranceSpinner.Maximum = 100;
+            this._timeAxisToleranceSpinner.Minimum = 0;
+            this._timeAxisToleranceSpinner.Value = 0;
+            this._timeAxisToleranceSpinner.Width = 80;
+            this._timeAxisToleranceSpinner.Enabled = false;
+
+            this._settingsPanel.Controls.Add(this._timeAxisCheckBox, 0, 3);
+            this._settingsPanel.SetColumnSpan(this._timeAxisCheckBox, 2);
+            this._settingsPanel.Controls.Add(this._timeAxisToleranceLabel, 2, 3);
+            this._settingsPanel.Controls.Add(this._timeAxisToleranceSpinner, 3, 3);
+
             this._configSplit.Panel2.Controls.Add(this._settingsPanel);
 
             // ── Button Bar ────────────────────────────────────────────────────
@@ -163,6 +192,7 @@ namespace DocExtractor.UI.Controls
             ((System.ComponentModel.ISupportInitialize)this._configSplit).EndInit();
             ((System.ComponentModel.ISupportInitialize)this._fieldsGrid).EndInit();
             ((System.ComponentModel.ISupportInitialize)this._headerRowsSpinner).EndInit();
+            ((System.ComponentModel.ISupportInitialize)this._timeAxisToleranceSpinner).EndInit();
 
             this.AutoScaleDimensions = new SizeF(6F, 12F);
             this.AutoScaleMode = AutoScaleMode.Font;
@@ -192,5 +222,8 @@ namespace DocExtractor.UI.Controls
         private AntdUI.Button _setDefaultBtn;
         private AntdUI.Button _newConfigBtn;
         private AntdUI.Button _deleteConfigBtn;
+        private CheckBox _timeAxisCheckBox;
+        private Label _timeAxisToleranceLabel;
+        private NumericUpDown _timeAxisToleranceSpinner;
     }
 }

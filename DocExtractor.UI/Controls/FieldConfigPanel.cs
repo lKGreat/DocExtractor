@@ -48,6 +48,7 @@ namespace DocExtractor.UI.Controls
             _fieldsGrid.CellContentClick += OnFieldsGridCellClick;
             _valueCleaningCheckBox.CheckedChanged += OnValueCleaningToggled;
             _cleaningRulesBtn.Click += OnOpenCleaningRules;
+            _timeAxisCheckBox.CheckedChanged += OnTimeAxisToggled;
         }
 
         // ── Grid Loading ──────────────────────────────────────────────────────
@@ -81,6 +82,9 @@ namespace DocExtractor.UI.Controls
             var opts = _ctx.CurrentConfig.NormalizationOptions;
             _valueCleaningCheckBox.Checked = opts?.EnableValueCleaning ?? false;
             _cleaningRulesBtn.Enabled = _valueCleaningCheckBox.Checked;
+            _timeAxisCheckBox.Checked = opts?.EnableTimeAxisExpand ?? false;
+            _timeAxisToleranceSpinner.Value = (decimal)(opts?.TimeAxisDefaultTolerance ?? 0);
+            _timeAxisToleranceSpinner.Enabled = _timeAxisCheckBox.Checked;
         }
 
         private void UpdateConfigTypeBadge()
@@ -146,6 +150,11 @@ namespace DocExtractor.UI.Controls
         private void OnValueCleaningToggled(object sender, EventArgs e)
         {
             _cleaningRulesBtn.Enabled = _valueCleaningCheckBox.Checked;
+        }
+
+        private void OnTimeAxisToggled(object sender, EventArgs e)
+        {
+            _timeAxisToleranceSpinner.Enabled = _timeAxisCheckBox.Checked;
         }
 
         private void OnOpenCleaningRules(object sender, EventArgs e)
@@ -291,6 +300,8 @@ namespace DocExtractor.UI.Controls
 
             EnsureNormalizationOptions();
             _ctx.CurrentConfig.NormalizationOptions.EnableValueCleaning = _valueCleaningCheckBox.Checked;
+            _ctx.CurrentConfig.NormalizationOptions.EnableTimeAxisExpand = _timeAxisCheckBox.Checked;
+            _ctx.CurrentConfig.NormalizationOptions.TimeAxisDefaultTolerance = (double)_timeAxisToleranceSpinner.Value;
         }
     }
 }

@@ -48,5 +48,17 @@ namespace DocExtractor.Core.Models
                 ? CleaningRules
                 : ValueCleaningRule.GetDefaultRules();
         }
+
+        /// <summary>是否启用时间轴展开（自动检测多步序列/跳变/阈值模式并拆分行）</summary>
+        public bool EnableTimeAxisExpand { get; set; }
+
+        /// <summary>时间轴展开的触发字段名（空则自动扫描所有字段）</summary>
+        public string TimeAxisTriggerField { get; set; } = string.Empty;
+
+        /// <summary>时间轴展开的默认公差</summary>
+        public double TimeAxisDefaultTolerance { get; set; } = 0;
+
+        /// <summary>无法解析时间时的默认时间值</summary>
+        public double TimeAxisDefaultTime { get; set; } = 0;
     }
 }

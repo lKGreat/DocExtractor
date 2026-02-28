@@ -50,30 +50,62 @@ namespace DocExtractor.Core.Splitting
 
         public IEnumerable<ExtractedRecord> Split(ExtractedRecord record, SplitRule rule)
         {
-            string fieldName = rule.TriggerColumn;
-            if (string.IsNullOrWhiteSpace(fieldName) ||
-                !record.Fields.TryGetValue(fieldName, out var value) ||
-                string.IsNullOrWhiteSpace(value))
-            {
-                yield return record;
-                yield break;
-            }
-
             string timeField = string.IsNullOrWhiteSpace(rule.TimeAxisFieldName)
                 ? "TimeAxis"
                 : rule.TimeAxisFieldName;
 
-            var steps = TryTransitionWithTolerance(value)
-                     ?? TryMultiStepSequence(value, rule.DefaultTolerance, rule.DefaultTimeValue)
-                     ?? TryTransitionSimple(value)
-                     ?? TryThresholdWithTime(value);
+            string triggerField = rule.TriggerColumn;
 
-            if (steps == null || steps.Count == 0)
+            // When TriggerColumn is empty, auto-scan all fields for time-axis patterns
+            if (string.IsNullOrWhiteSpace(triggerField))
             {
-                yield return record;
-                yield break;
+                foreach (var kvp in record.Fields)
+                {
+                    if (kvp.Key == "GroupName" || kvp.Key == timeField) continue;
+                    string rawVal = GetRawValue(record, kvp.Key);
+                    if (string.IsNullOrWhiteSpace(rawVal)) continue;
+
+                    var steps = MatchPatterns(rawVal, rule.DefaultTolerance, rule.DefaultTimeValue);
+                    if (steps != null && steps.Count > 0)
+                        return EmitSplitRecords(record, kvp.Key, timeField, steps);
+                }
+                return new[] { record };
             }
 
+            string value = GetRawValue(record, triggerField);
+            if (string.IsNullOrWhiteSpace(value))
+                return new[] { record };
+
+            var matched = MatchPatterns(value, rule.DefaultTolerance, rule.DefaultTimeValue);
+            if (matched == null || matched.Count == 0)
+                return new[] { record };
+
+            return EmitSplitRecords(record, triggerField, timeField, matched);
+        }
+
+        private static string GetRawValue(ExtractedRecord record, string fieldName)
+        {
+            if (record.RawValues != null &&
+                record.RawValues.TryGetValue(fieldName, out var raw) &&
+                !string.IsNullOrWhiteSpace(raw))
+                return raw;
+            if (record.Fields.TryGetValue(fieldName, out var fld) &&
+                !string.IsNullOrWhiteSpace(fld))
+                return fld;
+            return null;
+        }
+
+        private static List<StepResult> MatchPatterns(string value, double tolerance, double defaultTime)
+        {
+            return TryTransitionWithTolerance(value)
+                ?? TryMultiStepSequence(value, tolerance, defaultTime)
+                ?? TryTransitionSimple(value)
+                ?? TryThresholdWithTime(value);
+        }
+
+        private static IEnumerable<ExtractedRecord> EmitSplitRecords(
+            ExtractedRecord record, string fieldName, string timeField, List<StepResult> steps)
+        {
             for (int i = 0; i < steps.Count; i++)
             {
                 var newRecord = CloneRecord(record);

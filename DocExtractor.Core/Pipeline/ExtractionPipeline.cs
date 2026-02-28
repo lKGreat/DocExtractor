@@ -178,7 +178,13 @@ namespace DocExtractor.Core.Pipeline
 
                 Report(progress, "拆分", "正在应用拆分规则...", 75);
 
-                // 6. 应用拆分规则（按 Priority 排序）
+                // 6a. 自动时间轴展开（全局开关，无需手动配置 SplitRule）
+                if (config.NormalizationOptions?.EnableTimeAxisExpand == true)
+                {
+                    allRecords = ApplyAutoTimeAxisExpand(allRecords, config.NormalizationOptions);
+                }
+
+                // 6b. 应用拆分规则（按 Priority 排序）
                 List<ExtractedRecord> finalRecords;
                 try
                 {
@@ -435,6 +441,30 @@ namespace DocExtractor.Core.Pipeline
                     return false;
             }
             return true;
+        }
+
+        private List<ExtractedRecord> ApplyAutoTimeAxisExpand(
+            List<ExtractedRecord> records,
+            ValueNormalizationOptions opts)
+        {
+            var syntheticRule = new SplitRule
+            {
+                RuleName = "__auto_timeaxis__",
+                Type = SplitType.TimeAxisExpand,
+                TriggerColumn = opts.TimeAxisTriggerField ?? string.Empty,
+                TimeAxisFieldName = "TimeAxis",
+                DefaultTolerance = opts.TimeAxisDefaultTolerance,
+                DefaultTimeValue = opts.TimeAxisDefaultTime,
+                IsEnabled = true
+            };
+
+            var splitter = _splitters.FirstOrDefault(s => s.SupportedType == SplitType.TimeAxisExpand);
+            if (splitter == null) return records;
+
+            var result = new List<ExtractedRecord>();
+            foreach (var record in records)
+                result.AddRange(splitter.Split(record, syntheticRule));
+            return result;
         }
 
         private static List<ExtractedRecord> SortByTimeAxisIfPresent(List<ExtractedRecord> records)
