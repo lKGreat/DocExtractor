@@ -3,6 +3,7 @@ using System.IO;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocExtractor.Core.Exceptions;
 using DocExtractor.Core.Interfaces;
 using DocExtractor.Core.Models;
 using DocExtractor.Parsing.Common;
@@ -33,60 +34,75 @@ namespace DocExtractor.Parsing.Word
 
         public IReadOnlyList<RawTable> Parse(string filePath)
         {
-            var result = new List<RawTable>();
-
-            using var doc = WordprocessingDocument.Open(filePath, isEditable: false);
-            var body = doc.MainDocumentPart?.Document?.Body;
-            if (body == null) return result;
-
-            // 统计 Body 总子元素数（用于计算相对位置）
-            int totalElements = body.ChildElements.Count;
-            int elementIndex = 0;
-
-            // 按文档顺序遍历 Body 直接子元素，同时追踪当前章节标题
-            string? currentSectionHeading = null;
-            string? currentSectionNumber = null;
-            int tableIndex = 0;
-
-            foreach (OpenXmlElement element in body.ChildElements)
+            try
             {
-                float position = totalElements > 0 ? (float)elementIndex / totalElements : 0f;
-                elementIndex++;
+                var result = new List<RawTable>();
 
-                if (element is Paragraph para)
+                using var doc = WordprocessingDocument.Open(filePath, isEditable: false);
+                var body = doc.MainDocumentPart?.Document?.Body;
+                if (body == null) return result;
+
+                // 统计 Body 总子元素数（用于计算相对位置）
+                int totalElements = body.ChildElements.Count;
+                int elementIndex = 0;
+
+                // 按文档顺序遍历 Body 直接子元素，同时追踪当前章节标题
+                string? currentSectionHeading = null;
+                string? currentSectionNumber = null;
+                int tableIndex = 0;
+
+                foreach (OpenXmlElement element in body.ChildElements)
                 {
-                    // 提取段落格式特征（OpenXML 层）
-                    var features = ParagraphFeatureExtractor.Extract(para);
-                    string paraText = ParagraphFeatureExtractor.ExtractText(para);
+                    float position = totalElements > 0 ? (float)elementIndex / totalElements : 0f;
+                    elementIndex++;
 
-                    // 通过接口检测（规则层 or 混合层）
-                    var heading = _headingDetector.Detect(
-                        paraText,
-                        features.IsBold,
-                        features.FontSize,
-                        features.HasHeadingStyle,
-                        features.OutlineLevel,
-                        position);
-
-                    if (heading != null)
+                    if (element is Paragraph para)
                     {
-                        currentSectionHeading = heading.FullText;
-                        currentSectionNumber = heading.Number;
+                        // 提取段落格式特征（OpenXML 层）
+                        var features = ParagraphFeatureExtractor.Extract(para);
+                        string paraText = ParagraphFeatureExtractor.ExtractText(para);
+
+                        // 通过接口检测（规则层 or 混合层）
+                        var heading = _headingDetector.Detect(
+                            paraText,
+                            features.IsBold,
+                            features.FontSize,
+                            features.HasHeadingStyle,
+                            features.OutlineLevel,
+                            position);
+
+                        if (heading != null)
+                        {
+                            currentSectionHeading = heading.FullText;
+                            currentSectionNumber = heading.Number;
+                        }
+                    }
+                    else if (element is Table table)
+                    {
+                        var rawTable = ParseTable(table, filePath, tableIndex++);
+                        if (!rawTable.IsEmpty)
+                        {
+                            rawTable.SectionHeading = currentSectionHeading;
+                            rawTable.SectionNumber = currentSectionNumber;
+                            result.Add(rawTable);
+                        }
                     }
                 }
-                else if (element is Table table)
-                {
-                    var rawTable = ParseTable(table, filePath, tableIndex++);
-                    if (!rawTable.IsEmpty)
-                    {
-                        rawTable.SectionHeading = currentSectionHeading;
-                        rawTable.SectionNumber = currentSectionNumber;
-                        result.Add(rawTable);
-                    }
-                }
+
+                return result;
             }
-
-            return result;
+            catch (ParseException)
+            {
+                throw;
+            }
+            catch (System.Exception ex)
+            {
+                throw new ParseException(
+                    $"Word 解析失败：{ex.Message}",
+                    filePath,
+                    nameof(WordDocumentParser),
+                    ex);
+            }
         }
 
         private RawTable ParseTable(Table table, string sourceFile, int tableIndex)

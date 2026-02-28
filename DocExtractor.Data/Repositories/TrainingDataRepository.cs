@@ -37,7 +37,8 @@ namespace DocExtractor.Data.Repositories
 
         public TrainingDataRepository(string dbPath)
         {
-            _conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+            _conn = new SQLiteConnection(
+                $"Data Source={dbPath};Version=3;Pooling=True;Max Pool Size=100;Journal Mode=WAL;");
             _conn.Open();
             // 始终执行建表（全部用 CREATE TABLE IF NOT EXISTS，幂等安全）
             // 数据库文件由 ExtractionConfigRepository 先创建，此处补齐训练相关表
@@ -60,14 +61,19 @@ namespace DocExtractor.Data.Repositories
 
         // ── 列名训练数据 ─────────────────────────────────────────────────────
 
-        public void AddColumnSample(string columnText, string fieldName, string? source = null)
+        public void AddColumnSample(
+            string columnText,
+            string fieldName,
+            string? source = null,
+            bool isVerified = false)
         {
             using var cmd = new SQLiteCommand(
-                "INSERT INTO ColumnTrainingData (ColumnText, FieldName, Source) VALUES (@t, @f, @s)",
+                "INSERT INTO ColumnTrainingData (ColumnText, FieldName, Source, IsVerified) VALUES (@t, @f, @s, @v)",
                 _conn);
             cmd.Parameters.AddWithValue("@t", columnText);
             cmd.Parameters.AddWithValue("@f", fieldName);
             cmd.Parameters.AddWithValue("@s", source ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("@v", isVerified ? 1 : 0);
             cmd.ExecuteNonQuery();
         }
 
@@ -89,6 +95,19 @@ namespace DocExtractor.Data.Repositories
         public int GetColumnSampleCount() =>
             (int)(long)new SQLiteCommand(
                 "SELECT COUNT(*) FROM ColumnTrainingData", _conn).ExecuteScalar()!;
+
+        public int GetVerifiedColumnSampleCount(string? source = null)
+        {
+            string sql = "SELECT COUNT(*) FROM ColumnTrainingData WHERE IsVerified=1";
+            if (!string.IsNullOrWhiteSpace(source))
+                sql += " AND Source=@s";
+
+            using var cmd = new SQLiteCommand(sql, _conn);
+            if (!string.IsNullOrWhiteSpace(source))
+                cmd.Parameters.AddWithValue("@s", source);
+
+            return (int)(long)cmd.ExecuteScalar()!;
+        }
 
         // ── NER 训练数据 ──────────────────────────────────────────────────────
 

@@ -29,6 +29,8 @@ namespace DocExtractor.Core.Interfaces
         public string SourceFile { get; set; } = string.Empty;
         public bool Success { get; set; }
         public string? ErrorMessage { get; set; }
+        public string? ErrorCode { get; set; }
+        public string? ErrorStage { get; set; }
         public IReadOnlyList<ExtractedRecord> Records { get; set; } = new List<ExtractedRecord>();
         public int TablesProcessed { get; set; }
         public int RecordsTotal { get; set; }

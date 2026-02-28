@@ -8,20 +8,17 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using DocExtractor.Core.Interfaces;
 using DocExtractor.Core.Models;
-using DocExtractor.Core.Pipeline;
+using DocExtractor.Core.Models.Preview;
 using DocExtractor.Data.Export;
 using DocExtractor.Data.Repositories;
-using DocExtractor.ML;
 using DocExtractor.ML.ColumnClassifier;
 using DocExtractor.ML.EntityExtractor;
-using DocExtractor.ML.Inference;
-using DocExtractor.ML.Recommendation;
 using DocExtractor.ML.SectionClassifier;
 using DocExtractor.ML.Training;
-using DocExtractor.Parsing.Excel;
-using DocExtractor.Parsing.Word;
 using DocExtractor.UI.Helpers;
-using Newtonsoft.Json;
+using DocExtractor.UI.Logging;
+using DocExtractor.UI.Services;
+using Microsoft.Extensions.Logging;
 
 namespace DocExtractor.UI.Forms
 {
@@ -33,15 +30,24 @@ namespace DocExtractor.UI.Forms
         // ── 状态 ─────────────────────────────────────────────────────────────
         private ExtractionConfig _currentConfig = new ExtractionConfig();
         private List<ExtractedRecord> _lastResults = new List<ExtractedRecord>();
+        private List<ExtractedRecord> _displayedCompleteResults = new List<ExtractedRecord>();
         private readonly string _dbPath;
         private readonly string _modelsDir;
         private ColumnClassifierModel _columnModel;
         private NerModel _nerModel;
         private SectionClassifierModel _sectionModel;
         private ExtractionConfigRepository _configRepo;
+        private ConfigWorkflowService _configService;
         private List<(int Id, string Name)> _configItems = new List<(int, string)>();
         private int _currentConfigId = -1;
         private CancellationTokenSource _trainCts;
+        private ILoggerFactory _loggerFactory;
+        private ILogger _logger;
+        private ILogger _trainLogger;
+        private readonly ExtractionWorkflowService _extractionService = new ExtractionWorkflowService();
+        private readonly TrainingWorkflowService _trainingService = new TrainingWorkflowService();
+        private readonly RecommendationService _recommendationService = new RecommendationService();
+        private int _lastManualTrainingSuggestionCount;
 
         public MainForm()
         {
@@ -56,15 +62,39 @@ namespace DocExtractor.UI.Forms
             TryLoadModels();
 
             _configRepo = new ExtractionConfigRepository(_dbPath);
-            _configRepo.SeedBuiltInConfigs();
+            _configService = new ConfigWorkflowService(_configRepo);
+            _configService.SeedBuiltInConfigs();
 
             InitializeComponent();
+            InitializeLogging();
             WireEvents();
             LoadConfigList();
             LoadConfigToGrids();
             RefreshTrainingStats();
             OnPresetChanged(null, EventArgs.Empty); // 初始化预设参数状态
             RefreshRecommendCombo();
+        }
+
+        private void InitializeLogging()
+        {
+            string logDir = Path.Combine(Application.StartupPath, "logs");
+            _loggerFactory = LoggerFactory.Create(builder =>
+            {
+                builder.SetMinimumLevel(LogLevel.Information);
+                builder.AddProvider(new UiFileLoggerProvider(WriteStructuredLogToUi, logDir));
+            });
+
+            _logger = _loggerFactory.CreateLogger("Pipeline");
+            _trainLogger = _loggerFactory.CreateLogger("Training");
+            _logger.LogInformation("应用启动：DocExtractor UI 初始化完成");
+        }
+
+        private void WriteStructuredLogToUi(string category, string line)
+        {
+            if (string.Equals(category, "Training", StringComparison.OrdinalIgnoreCase))
+                WriteTrainLogToUi(line);
+            else
+                WriteLogToUi(line);
         }
 
         // ── 事件绑定 ──────────────────────────────────────────────────────────
@@ -79,8 +109,10 @@ namespace DocExtractor.UI.Forms
                 toRemove.ForEach(f => _fileListBox.Items.Remove(f));
             };
             _clearFilesBtn.Click += (s, e) => _fileListBox.Items.Clear();
+            _previewBtn.Click += OnQuickPreview;
             _runBtn.Click += OnRunExtraction;
             _exportBtn.Click += OnExport;
+            _resultSearchBox.TextChanged += (s, e) => ApplyResultFilter();
 
             _fileListBox.DragEnter += (s, e) =>
             {
@@ -132,6 +164,7 @@ namespace DocExtractor.UI.Forms
             _deleteConfigBtn.Click += OnDeleteConfig;
             _importConfigBtn.Click += OnImportConfig;
             _exportConfigBtn.Click += OnExportConfig;
+            _fieldsGrid.CellContentClick += OnFieldsGridCellContentClick;
 
             // Tab 3：拆分规则
             _saveSplitBtn.Click += OnSaveSplitRules;
@@ -141,6 +174,7 @@ namespace DocExtractor.UI.Forms
             _genFromKnowledgeBtn.Click += OnGenerateFromKnowledge;
             _importCsvBtn.Click += OnImportTrainingData;
             _importSectionWordBtn.Click += OnImportSectionFromWord;
+            _columnErrorAnalysisBtn.Click += OnColumnErrorAnalysis;
             _presetCombo.SelectedIndexChanged += OnPresetChanged;
             _cancelTrainBtn.Click += OnCancelTraining;
 
@@ -170,6 +204,100 @@ namespace DocExtractor.UI.Forms
             }
         }
 
+        private async void OnQuickPreview(object sender, EventArgs e)
+        {
+            if (_fileListBox.Items.Count == 0)
+            {
+                MessageHelper.Warn(this, "请先添加要预览的文件");
+                return;
+            }
+
+            string filePath = _fileListBox.SelectedItem?.ToString()
+                              ?? _fileListBox.Items[0]?.ToString()
+                              ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(filePath))
+                return;
+
+            _previewBtn.Enabled = false;
+            try
+            {
+                AppendLog($"开始快速预览：{Path.GetFileName(filePath)}");
+                var preview = await Task.Run(() =>
+                    _extractionService.Preview(filePath, _currentConfig, _columnModel, _sectionModel));
+
+                if (!preview.Success)
+                {
+                    MessageHelper.Error(this, $"预览失败：{preview.ErrorMessage}");
+                    return;
+                }
+
+                AppendLog($"预览完成：{Path.GetFileName(filePath)} | 表格 {preview.Tables.Count} 个");
+                foreach (var table in preview.Tables)
+                {
+                    int mapped = table.Columns.Count(c => !string.IsNullOrWhiteSpace(c.MappedFieldName));
+                    int lowConfidence = table.Columns.Count(c => c.IsLowConfidence);
+                    AppendLog($"  表格{table.TableIndex + 1} ({table.RowCount}x{table.ColCount}) " +
+                              $"结构={table.SchemaType} 建议表头={table.SuggestedHeaderRowCount} " +
+                              $"匹配列 {mapped}/{table.Columns.Count}，低置信度 {lowConfidence}");
+                }
+
+                foreach (var warning in preview.Warnings.Take(10))
+                    AppendLog($"  [预览警告] {warning}");
+
+                HandleLowConfidenceMappingReview(filePath, preview);
+
+                if (preview.Warnings.Count > 0)
+                {
+                    MessageHelper.Warn(this,
+                        $"预览完成：发现 {preview.Warnings.Count} 个低置信度列，请检查配置或手工修正列映射。");
+                }
+                else
+                {
+                    MessageHelper.Success(this, "预览完成：列映射状态良好。");
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"预览失败：{ex.Message}");
+            }
+            finally
+            {
+                _previewBtn.Enabled = true;
+            }
+        }
+
+        private void HandleLowConfidenceMappingReview(string filePath, ExtractionPreviewResult preview)
+        {
+            var lowConfidenceItems = preview.Tables
+                .SelectMany(t => t.Columns)
+                .Where(c => c.IsLowConfidence && !string.IsNullOrWhiteSpace(c.RawColumnName))
+                .ToList();
+
+            if (lowConfidenceItems.Count == 0)
+                return;
+
+            using var form = new ColumnMappingReviewForm(lowConfidenceItems, _currentConfig.Fields);
+            if (form.ShowDialog(this) != DialogResult.OK)
+                return;
+
+            int saved = _trainingService.SaveManualColumnMappings(_dbPath, form.Corrections);
+            if (saved > 0)
+            {
+                AppendLog($"已保存 {saved} 条手工列映射标注（来源：{Path.GetFileName(filePath)}）");
+                MessageHelper.Success(this, $"已保存 {saved} 条映射标注");
+                RefreshTrainingStats();
+
+                int verifiedCount = _trainingService.GetVerifiedManualSampleCount(_dbPath);
+                if (verifiedCount >= 25
+                    && verifiedCount != _lastManualTrainingSuggestionCount
+                    && verifiedCount % 25 == 0)
+                {
+                    _lastManualTrainingSuggestionCount = verifiedCount;
+                    MessageHelper.Info(this, $"已积累 {verifiedCount} 条人工确认标注，建议立即重训列名模型。");
+                }
+            }
+        }
+
         private async void OnRunExtraction(object sender, EventArgs e)
         {
             if (_fileListBox.Items.Count == 0)
@@ -184,6 +312,8 @@ namespace DocExtractor.UI.Forms
             _resultGrid.Rows.Clear();
             _resultGrid.Columns.Clear();
             _lastResults.Clear();
+            _displayedCompleteResults.Clear();
+            _resultSearchBox.Text = string.Empty;
 
             var files = _fileListBox.Items.Cast<string>().ToList();
             var config = _currentConfig;
@@ -199,17 +329,13 @@ namespace DocExtractor.UI.Forms
             {
                 var results = await Task.Run(() =>
                 {
-                    var normalizer = new HybridColumnNormalizer(_columnModel, config.ColumnMatch);
-                    // 构建混合章节标题检测器（规则 + ML 三层级联）
-                    var ruleDetector = new SectionHeadingDetector();
-                    var hybridHeadingDetector = new HybridSectionHeadingDetector(ruleDetector, _sectionModel);
-                    var parsers = new IDocumentParser[]
-                    {
-                        new WordDocumentParser(hybridHeadingDetector),
-                        new ExcelDocumentParser(config.HeaderRowCount, config.TargetSheets)
-                    };
-                    var pipeline = new ExtractionPipeline(parsers, normalizer, _nerModel);
-                    return pipeline.ExecuteBatch(files, config, progress);
+                    return _extractionService.ExecuteBatch(
+                        files,
+                        config,
+                        _columnModel,
+                        _nerModel,
+                        _sectionModel,
+                        progress);
                 });
 
                 // 显示管道错误（解析异常等）
@@ -223,7 +349,8 @@ namespace DocExtractor.UI.Forms
 
                 _lastResults = results.SelectMany(r => r.Records).ToList();
                 var completeResults = _lastResults.Where(r => r.IsComplete).ToList();
-                ShowResults(completeResults, config.Fields);
+                _displayedCompleteResults = completeResults;
+                ShowResults(_displayedCompleteResults, config.Fields);
 
                 int total = _lastResults.Count;
                 int complete = completeResults.Count;
@@ -258,6 +385,14 @@ namespace DocExtractor.UI.Forms
             var toExport = _lastResults.Where(r => r.IsComplete).ToList();
             if (toExport.Count == 0) return;
 
+            var selectedFieldNames = ShowExportFieldSelection(_currentConfig.Fields);
+            if (selectedFieldNames == null) return;
+            if (selectedFieldNames.Count == 0)
+            {
+                MessageHelper.Warn(this, "请至少选择一个导出字段");
+                return;
+            }
+
             using var dlg = new SaveFileDialog
             {
                 Filter = "Excel 文件|*.xlsx",
@@ -269,7 +404,7 @@ namespace DocExtractor.UI.Forms
                 try
                 {
                     var exporter = new ExcelExporter();
-                    exporter.Export(toExport, _currentConfig.Fields, dlg.FileName);
+                    exporter.Export(toExport, _currentConfig.Fields, dlg.FileName, selectedFieldNames);
                     AppendLog($"已导出到: {dlg.FileName}");
                     MessageHelper.Success(this, "导出成功！");
                 }
@@ -289,7 +424,7 @@ namespace DocExtractor.UI.Forms
 
             try
             {
-                _currentConfigId = _configRepo.Save(_currentConfig);
+                _currentConfigId = _configService.Save(_currentConfig);
                 LoadConfigList(_currentConfigId);
                 AppendLog($"配置「{_currentConfig.ConfigName}」已保存");
                 MessageHelper.Success(this, "配置已保存");
@@ -303,7 +438,7 @@ namespace DocExtractor.UI.Forms
         private void OnSetDefault(object sender, EventArgs e)
         {
             if (_currentConfigId <= 0) return;
-            _configRepo.SetDefaultConfigId(_currentConfigId);
+            _configService.SetDefaultConfigId(_currentConfigId);
             MessageHelper.Success(this, $"已将「{_currentConfig.ConfigName}」设为默认配置");
         }
 
@@ -315,7 +450,7 @@ namespace DocExtractor.UI.Forms
             try
             {
                 var config = new ExtractionConfig { ConfigName = name };
-                int id = _configRepo.Save(config);
+                int id = _configService.Save(config);
                 LoadConfigList(id);
                 MessageHelper.Success(this, $"配置「{name}」已创建");
             }
@@ -342,7 +477,7 @@ namespace DocExtractor.UI.Forms
 
             try
             {
-                _configRepo.Delete(_currentConfigId);
+                _configService.Delete(_currentConfigId);
                 LoadConfigList();
                 MessageHelper.Success(this, "配置已删除");
             }
@@ -383,7 +518,7 @@ namespace DocExtractor.UI.Forms
                     if (result != DialogResult.Yes) return;
                 }
 
-                int id = _configRepo.Save(config);
+                int id = _configService.Save(config);
                 LoadConfigList(id);
                 MessageHelper.Success(this, $"配置「{config.ConfigName}」导入成功（{config.Fields.Count} 个字段）");
             }
@@ -462,11 +597,53 @@ namespace DocExtractor.UI.Forms
             }
         }
 
+        private void OnFieldsGridCellContentClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            if (_fieldsGrid.Columns[e.ColumnIndex].Name != "EditField") return;
+
+            var row = _fieldsGrid.Rows[e.RowIndex];
+            if (row.IsNewRow) return;
+
+            var fieldName = row.Cells["FieldName"].Value?.ToString();
+            if (string.IsNullOrWhiteSpace(fieldName)) return;
+
+            var field = new FieldDefinition
+            {
+                FieldName = fieldName,
+                DisplayName = row.Cells["DisplayName"].Value?.ToString() ?? fieldName,
+                IsRequired = row.Cells["IsRequired"].Value is true,
+                DefaultValue = row.Cells["DefaultValue"].Value?.ToString() ?? string.Empty
+            };
+
+            if (Enum.TryParse<FieldDataType>(row.Cells["DataType"].Value?.ToString(), out var dt))
+                field.DataType = dt;
+
+            var variants = row.Cells["Variants"].Value?.ToString() ?? string.Empty;
+            field.KnownColumnVariants = new List<string>(
+                variants.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(v => v.Trim())
+                    .Where(v => !string.IsNullOrWhiteSpace(v)));
+
+            using var editor = new FieldEditorForm(field);
+            if (editor.ShowDialog(this) != DialogResult.OK || editor.EditedField == null)
+                return;
+
+            var edited = editor.EditedField;
+            row.Cells["FieldName"].Value = edited.FieldName;
+            row.Cells["DisplayName"].Value = edited.DisplayName;
+            row.Cells["DataType"].Value = edited.DataType.ToString();
+            row.Cells["IsRequired"].Value = edited.IsRequired;
+            row.Cells["DefaultValue"].Value = edited.DefaultValue ?? string.Empty;
+            row.Cells["Variants"].Value = string.Join(",", edited.KnownColumnVariants);
+        }
+
         private void SaveGlobalSettings()
         {
             _currentConfig.HeaderRowCount = (int)_headerRowsSpinner.Value;
             if (Enum.TryParse<ColumnMatchMode>(_columnMatchCombo.SelectedItem?.ToString(), out var cm))
                 _currentConfig.ColumnMatch = cm;
+            _currentConfig.EnableValueNormalization = _valueNormalizationCheckBox.Checked;
         }
 
         // ── Tab 3：拆分规则事件 ───────────────────────────────────────────────
@@ -617,18 +794,7 @@ namespace DocExtractor.UI.Forms
 
             try
             {
-                int imported = 0;
-                using var repo = new TrainingDataRepository(_dbPath);
-
-                foreach (var line in File.ReadAllLines(dlg.FileName, System.Text.Encoding.UTF8))
-                {
-                    var parts = line.Split(',');
-                    if (parts.Length >= 2 && !string.IsNullOrWhiteSpace(parts[0]))
-                    {
-                        repo.AddColumnSample(parts[0].Trim(), parts[1].Trim(), dlg.FileName);
-                        imported++;
-                    }
-                }
+                int imported = _trainingService.ImportColumnSamples(_dbPath, dlg.FileName);
 
                 RefreshTrainingStats();
                 AppendTrainLog($"从文件导入 {imported} 条列名标注");
@@ -647,36 +813,8 @@ namespace DocExtractor.UI.Forms
 
             try
             {
-                // 加载所有训练数据
-                List<(string ColumnText, string FieldName)> colSamples;
-                List<NerAnnotation> nerSamples;
-                List<DocExtractor.Data.Repositories.SectionAnnotation> secSamples;
-                using (var repo = new TrainingDataRepository(_dbPath))
-                {
-                    colSamples = repo.GetColumnSamples();
-                    nerSamples = repo.GetNerSamples();
-                    secSamples = repo.GetSectionSamples();
-                }
-
-                var colInputs = colSamples.ConvertAll(s => new ColumnInput
-                {
-                    ColumnText = s.ColumnText,
-                    Label = s.FieldName
-                });
-
-                var secInputs = secSamples.ConvertAll(s => new SectionInput
-                {
-                    Text = s.ParagraphText,
-                    IsBold = s.IsBold ? 1f : 0f,
-                    FontSize = s.FontSize,
-                    HasNumberPrefix = s.ParagraphText.Length > 0 && char.IsDigit(s.ParagraphText[0]) ? 1f : 0f,
-                    TextLength = s.ParagraphText.Length,
-                    HasHeadingStyle = s.HasHeadingStyle ? 1f : 0f,
-                    Position = 0f,
-                    IsHeading = s.IsHeading
-                });
-
-                AppendTrainLog($"数据统计 — 列名:{colInputs.Count}  NER:{nerSamples.Count}  章节:{secInputs.Count}");
+                var bundle = _trainingService.LoadTrainingData(_dbPath);
+                AppendTrainLog($"数据统计 — 列名:{bundle.ColumnInputs.Count}  NER:{bundle.NerSamples.Count}  章节:{bundle.SectionInputs.Count}");
 
                 var parameters = BuildTrainingParameters();
                 _trainCts = new CancellationTokenSource();
@@ -692,34 +830,15 @@ namespace DocExtractor.UI.Forms
                     }
                 });
 
-                var trainer = new UnifiedModelTrainer();
                 var result = await Task.Run(() =>
-                    trainer.TrainAll(colInputs, nerSamples, secInputs, _modelsDir, parameters, progress, ct));
+                    _trainingService.TrainUnified(bundle, _modelsDir, parameters, progress, ct));
 
-                // 重载所有模型
-                string colModelPath = Path.Combine(_modelsDir, "column_classifier.zip");
-                string nerModelPath = Path.Combine(_modelsDir, "ner_model.zip");
-                string sectionModelPath = Path.Combine(_modelsDir, "section_classifier.zip");
-                if (File.Exists(colModelPath)) _columnModel.Reload(colModelPath);
-                if (File.Exists(nerModelPath)) _nerModel.Load(nerModelPath);
-                if (File.Exists(sectionModelPath)) _sectionModel.Reload(sectionModelPath);
+                _trainingService.ReloadModels(_modelsDir, _columnModel, _nerModel, _sectionModel);
 
                 _evalLabel.Text = "统一训练完成";
                 AppendTrainLog($"\n========== 统一训练完成 ==========\n{result}");
 
-                // 保存训练历史
-                using (var repo = new TrainingDataRepository(_dbPath))
-                {
-                    if (result.ColumnEval != null)
-                        repo.SaveTrainingRecord("ColumnClassifier", colInputs.Count, result.ColumnEval.ToString(),
-                            JsonConvert.SerializeObject(parameters));
-                    if (result.NerEval != null)
-                        repo.SaveTrainingRecord("NER", nerSamples.Count, result.NerEval.ToString(),
-                            JsonConvert.SerializeObject(parameters));
-                    if (result.SectionEval != null)
-                        repo.SaveTrainingRecord("SectionClassifier", secInputs.Count, result.SectionEval.ToString(),
-                            JsonConvert.SerializeObject(parameters));
-                }
+                _trainingService.SaveTrainingHistory(_dbPath, result, bundle, parameters);
 
                 MessageHelper.Success(this, "统一模型训练完成！");
             }
@@ -756,28 +875,10 @@ namespace DocExtractor.UI.Forms
 
             try
             {
-                var scanner = new WordParagraphScanner();
-                using var repo = new TrainingDataRepository(_dbPath);
-
-                foreach (var filePath in dlg.FileNames)
-                {
-                    var paragraphs = scanner.Scan(filePath);
-
-                    foreach (var p in paragraphs)
-                    {
-                        repo.AddSectionSample(
-                            p.Text,
-                            p.AutoIsHeading,
-                            p.IsBold,
-                            p.FontSize,
-                            p.HasHeadingStyle,
-                            p.OutlineLevel,
-                            filePath);
-                        imported++;
-                    }
-
-                    AppendTrainLog($"  {Path.GetFileName(filePath)}：扫描 {paragraphs.Count} 个段落");
-                }
+                var importResult = _trainingService.ImportSectionSamples(_dbPath, dlg.FileNames);
+                imported = importResult.ImportedCount;
+                foreach (var file in importResult.PerFileCounts)
+                    AppendTrainLog($"  {file.fileName}：扫描 {file.count} 个段落");
 
                 RefreshTrainingStats();
                 AppendTrainLog(
@@ -807,8 +908,7 @@ namespace DocExtractor.UI.Forms
 
                 var (colAdded, secPosAdded, secNegAdded) = await Task.Run(() =>
                 {
-                    using var repo = new TrainingDataRepository(_dbPath);
-                    return repo.GenerateFromKnowledge(configs);
+                    return _trainingService.GenerateFromKnowledge(_dbPath, configs);
                 });
 
                 RefreshTrainingStats();
@@ -845,6 +945,26 @@ namespace DocExtractor.UI.Forms
             }
         }
 
+        private void OnColumnErrorAnalysis(object sender, EventArgs e)
+        {
+            try
+            {
+                var items = _trainingService.BuildColumnErrorAnalysis(_dbPath, _columnModel);
+                if (items.Count == 0)
+                {
+                    MessageHelper.Info(this, "未发现列名分类错误样本，或模型尚未加载。");
+                    return;
+                }
+
+                using var form = new ColumnErrorAnalysisForm(items);
+                form.ShowDialog(this);
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"错误分析失败：{ex.Message}");
+            }
+        }
+
         // ── 智能推荐 ────────────────────────────────────────────────────────────
 
         private void AutoLearnGroupKnowledge(List<ExtractedRecord> completeResults)
@@ -859,45 +979,18 @@ namespace DocExtractor.UI.Forms
 
                 if (withGroup.Count == 0) return;
 
-                using var repo = new GroupKnowledgeRepository(_dbPath);
-
-                // 按来源文件分组，逐文件做"先清后录"（替换模式）
-                var byFile = withGroup
-                    .GroupBy(r => r.SourceFile ?? string.Empty)
-                    .ToList();
-
-                int totalGroups = 0, totalInserted = 0, replacedFiles = 0;
-
-                foreach (var fileGroup in byFile)
+                var summary = _recommendationService.AutoLearnGroupKnowledge(_dbPath, withGroup);
+                foreach (var detail in summary.FileDetails)
                 {
-                    string sourceFile = fileGroup.Key;
-
-                    // 判断是否已录入过（用于日志提示）
-                    bool wasLearned = repo.IsSourceFileLearned(sourceFile);
-
-                    // 组名 → 该文件下的记录列表
-                    var groupDict = fileGroup
-                        .GroupBy(r => r.Fields["GroupName"])
-                        .ToDictionary(
-                            g => g.Key,
-                            g => (IReadOnlyList<ExtractedRecord>)g.ToList());
-
-                    // 替换写入（内部先 DELETE 该文件旧记录，再 INSERT）
-                    int inserted = repo.ReplaceSourceFileItems(groupDict, sourceFile);
-
-                    totalGroups   += groupDict.Count;
-                    totalInserted += inserted;
-                    if (wasLearned) replacedFiles++;
-
-                    string action = wasLearned ? "更新" : "新录";
-                    AppendLog($"知识库{action}：{System.IO.Path.GetFileName(sourceFile)} " +
-                              $"→ {groupDict.Count} 个组 / {inserted} 条细则");
+                    string action = detail.WasReplaced ? "更新" : "新录";
+                    AppendLog($"知识库{action}：{System.IO.Path.GetFileName(detail.SourceFile)} " +
+                              $"→ {detail.GroupCount} 个组 / {detail.InsertedCount} 条细则");
                 }
 
-                if (replacedFiles > 0)
-                    AppendLog($"[去重] {replacedFiles} 个文件已存在旧记录，已自动清空后重新录入");
+                if (summary.ReplacedFiles > 0)
+                    AppendLog($"[去重] {summary.ReplacedFiles} 个文件已存在旧记录，已自动清空后重新录入");
 
-                AppendLog($"知识库合计学习 {totalGroups} 个组、{totalInserted} 条记录（共 {byFile.Count} 个文件）");
+                AppendLog($"知识库合计学习 {summary.TotalGroups} 个组、{summary.TotalInserted} 条记录（共 {summary.FileDetails.Count} 个文件）");
 
                 // 刷新推荐面板的组名下拉列表和知识库计数
                 RefreshRecommendCombo();
@@ -918,25 +1011,9 @@ namespace DocExtractor.UI.Forms
         {
             try
             {
-                var items = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                // 从知识库获取已知组名
-                using (var repo = new GroupKnowledgeRepository(_dbPath))
-                {
-                    foreach (var g in repo.GetDistinctGroupNames())
-                        items.Add(g);
-                }
-
-                // 从当前抽取结果获取组名
-                foreach (var r in _lastResults)
-                {
-                    string gn = r.GetField("GroupName");
-                    if (!string.IsNullOrWhiteSpace(gn))
-                        items.Add(GroupKnowledgeRepository.NormalizeGroupName(gn));
-                }
-
+                var items = _recommendationService.BuildRecommendGroups(_dbPath, _lastResults);
                 _recommendGroupCombo.Items.Clear();
-                foreach (var item in items.OrderBy(x => x))
+                foreach (var item in items)
                     _recommendGroupCombo.Items.Add(item);
             }
             catch { }
@@ -955,40 +1032,11 @@ namespace DocExtractor.UI.Forms
 
             try
             {
-                List<string> allGroupNames;
-                using (var repo = new GroupKnowledgeRepository(_dbPath))
-                {
-                    allGroupNames = repo.GetDistinctGroupNames();
-                    _recommendCountLabel.Text = $"知识库：{repo.GetKnowledgeCount()} 条";
-                }
+                var response = _recommendationService.Recommend(_dbPath, groupName);
+                _recommendCountLabel.Text = $"知识库：{response.KnowledgeCount} 条";
 
-                if (allGroupNames.Count == 0)
+                if (response.Items.Count == 0)
                 {
-                    _recommendHintLabel.Visible = true;
-                    _recommendGrid.Visible = false;
-                    return;
-                }
-
-                var recommender = new GroupItemRecommender();
-                // 使用回调模式获取数据，避免 ML 项目依赖 Data 项目
-                var results = recommender.Recommend(
-                    groupName,
-                    allGroupNames,
-                    gn =>
-                    {
-                        using var repo = new GroupKnowledgeRepository(_dbPath);
-                        var items = repo.GetItemsForGroup(gn);
-                        return items.ConvertAll(gi => new KnowledgeItem
-                        {
-                            ItemName = gi.ItemName,
-                            RequiredValue = gi.RequiredValue,
-                            SourceFile = gi.SourceFile
-                        });
-                    });
-
-                if (results.Count == 0)
-                {
-                    _recommendHintLabel.Text = $"未找到与「{groupName}」相似的组名。\n请先通过数据抽取积累更多文档，系统会自动学习组名与细则的对应关系。";
                     _recommendHintLabel.Visible = true;
                     _recommendGrid.Visible = false;
                     return;
@@ -997,9 +1045,9 @@ namespace DocExtractor.UI.Forms
                 _recommendHintLabel.Visible = false;
                 _recommendGrid.Visible = true;
 
-                for (int i = 0; i < results.Count; i++)
+                for (int i = 0; i < response.Items.Count; i++)
                 {
-                    var item = results[i];
+                    var item = response.Items[i];
                     int rowIdx = _recommendGrid.Rows.Add(
                         (i + 1).ToString(),
                         item.ItemName,
@@ -1019,7 +1067,7 @@ namespace DocExtractor.UI.Forms
                         row.DefaultCellStyle.ForeColor = Color.Gray;                         // 灰色
                 }
 
-                AppendLog($"推荐完成：组名「{groupName}」→ {results.Count} 条推荐项");
+                AppendLog($"推荐完成：组名「{groupName}」→ {response.Items.Count} 条推荐项");
             }
             catch (Exception ex)
             {
@@ -1056,6 +1104,53 @@ namespace DocExtractor.UI.Forms
             {
                 MessageHelper.Error(this, $"模板生成失败：{ex.Message}");
             }
+        }
+
+        private void OnOpenPackManager()
+        {
+            using var form = new PackManagerForm(_dbPath, () => _currentConfig);
+            form.ShowDialog(this);
+            LoadConfigList(_currentConfigId);
+        }
+
+        private void OnOpenModelManager()
+        {
+            using var form = new ModelManagerForm(_modelsDir, ReloadModelByName);
+            form.ShowDialog(this);
+        }
+
+        private void ReloadModelByName(string modelName)
+        {
+            try
+            {
+                if (string.Equals(modelName, "column_classifier", StringComparison.OrdinalIgnoreCase))
+                {
+                    string path = Path.Combine(_modelsDir, "column_classifier.zip");
+                    if (File.Exists(path)) _columnModel.Reload(path);
+                }
+                else if (string.Equals(modelName, "ner_model", StringComparison.OrdinalIgnoreCase))
+                {
+                    string path = Path.Combine(_modelsDir, "ner_model.zip");
+                    if (File.Exists(path)) _nerModel.Load(path);
+                }
+                else if (string.Equals(modelName, "section_classifier", StringComparison.OrdinalIgnoreCase))
+                {
+                    string path = Path.Combine(_modelsDir, "section_classifier.zip");
+                    if (File.Exists(path)) _sectionModel.Reload(path);
+                }
+
+                AppendLog($"模型已重载：{modelName}");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[警告] 模型重载失败：{modelName} - {ex.Message}");
+            }
+        }
+
+        private void OnOpenDiagnostics()
+        {
+            using var form = new DiagnosticsForm(_dbPath, _modelsDir);
+            form.ShowDialog(this);
         }
 
         // ── 辅助方法 ──────────────────────────────────────────────────────────
@@ -1131,25 +1226,72 @@ namespace DocExtractor.UI.Forms
             }
         }
 
-        private void AppendLog(string message)
+        private void ApplyResultFilter()
         {
-            if (_logBox.InvokeRequired)
+            if (_displayedCompleteResults.Count == 0)
+                return;
+
+            string keyword = _resultSearchBox.Text?.Trim() ?? string.Empty;
+            if (keyword.Length == 0)
             {
-                _logBox.Invoke(new Action(() => AppendLog(message)));
+                ShowResults(_displayedCompleteResults, _currentConfig.Fields);
                 return;
             }
-            _logBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}\n");
-            _logBox.ScrollToCaret();
+
+            var filtered = _displayedCompleteResults
+                .Where(r =>
+                    Path.GetFileName(r.SourceFile).IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0
+                    || r.Fields.Any(kv =>
+                        (!string.IsNullOrWhiteSpace(kv.Key)
+                         && kv.Key.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                        || (!string.IsNullOrWhiteSpace(kv.Value)
+                            && kv.Value.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)))
+                .ToList();
+
+            ShowResults(filtered, _currentConfig.Fields);
+        }
+
+        private void AppendLog(string message)
+        {
+            if (_logger != null)
+            {
+                _logger.LogInformation(message);
+                return;
+            }
+            WriteLogToUi($"[{DateTime.Now:HH:mm:ss}] {message}");
         }
 
         private void AppendTrainLog(string message)
         {
-            if (_trainLogBox.InvokeRequired)
+            if (_trainLogger != null)
             {
-                _trainLogBox.Invoke(new Action(() => AppendTrainLog(message)));
+                _trainLogger.LogInformation(message);
+            }
+            else
+            {
+                WriteTrainLogToUi($"[{DateTime.Now:HH:mm:ss}] {message}");
+            }
+        }
+
+        private void WriteLogToUi(string line)
+        {
+            if (_logBox.InvokeRequired)
+            {
+                _logBox.Invoke(new Action<string>(WriteLogToUi), line);
                 return;
             }
-            _trainLogBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}\n");
+            _logBox.AppendText(line + Environment.NewLine);
+            _logBox.ScrollToCaret();
+        }
+
+        private void WriteTrainLogToUi(string line)
+        {
+            if (_trainLogBox.InvokeRequired)
+            {
+                _trainLogBox.Invoke(new Action<string>(WriteTrainLogToUi), line);
+                return;
+            }
+            _trainLogBox.AppendText(line + Environment.NewLine);
             _trainLogBox.ScrollToCaret();
         }
 
@@ -1157,7 +1299,7 @@ namespace DocExtractor.UI.Forms
         {
             _configCombo.SelectedIndexChanged -= OnConfigComboChanged;
 
-            _configItems = _configRepo.GetAll();
+            _configItems = _configService.GetAll();
             _configCombo.Items.Clear();
             foreach (var item in _configItems)
                 _configCombo.Items.Add(item.Name);
@@ -1165,7 +1307,7 @@ namespace DocExtractor.UI.Forms
             if (_configItems.Count == 0) return;
 
             // 确定选中项
-            int targetId = selectId > 0 ? selectId : _configRepo.GetDefaultConfigId();
+            int targetId = selectId > 0 ? selectId : _configService.GetDefaultConfigId();
             int selectedIndex = 0;
             if (targetId > 0)
             {
@@ -1195,7 +1337,7 @@ namespace DocExtractor.UI.Forms
             if (idx < 0 || idx >= _configItems.Count) return;
 
             _currentConfigId = _configItems[idx].Id;
-            var config = _configRepo.GetById(_currentConfigId);
+            var config = _configService.GetById(_currentConfigId);
             if (config != null)
             {
                 _currentConfig = config;
@@ -1240,6 +1382,7 @@ namespace DocExtractor.UI.Forms
                 .FirstOrDefault(x => x == _currentConfig.ColumnMatch.ToString());
             if (matchItem != null)
                 _columnMatchCombo.SelectedItem = matchItem;
+            _valueNormalizationCheckBox.Checked = _currentConfig.EnableValueNormalization;
         }
 
         private void RefreshTrainingStats()
@@ -1247,9 +1390,35 @@ namespace DocExtractor.UI.Forms
             try
             {
                 using var repo = new TrainingDataRepository(_dbPath);
-                _colSampleCountLabel.Text = $"列名分类样本：{repo.GetColumnSampleCount()} 条";
-                _nerSampleCountLabel.Text = $"NER 标注样本：{repo.GetNerSampleCount()} 条";
-                _sectionSampleCountLabel.Text = $"章节标题样本：{repo.GetSectionSampleCount()} 条";
+                int colCount = repo.GetColumnSampleCount();
+                int nerCount = repo.GetNerSampleCount();
+                int sectionCount = repo.GetSectionSampleCount();
+
+                _colSampleCountLabel.Text = $"列名分类样本：{colCount} 条";
+                _nerSampleCountLabel.Text = $"NER 标注样本：{nerCount} 条";
+                _sectionSampleCountLabel.Text = $"章节标题样本：{sectionCount} 条";
+
+                var colLatest = repo.GetLatestRecord("ColumnClassifier");
+                var nerLatest = repo.GetLatestRecord("NER");
+                var sectionLatest = repo.GetLatestRecord("SectionClassifier");
+
+                string columnHealth = ComputeModelHealth(
+                    File.Exists(Path.Combine(_modelsDir, "column_classifier.zip")),
+                    colCount,
+                    10,
+                    TryExtractAccuracy(colLatest?.MetricsJson));
+                string nerHealth = ComputeModelHealth(
+                    File.Exists(Path.Combine(_modelsDir, "ner_model.zip")),
+                    nerCount,
+                    20,
+                    TryExtractAccuracy(nerLatest?.MetricsJson));
+                string sectionHealth = ComputeModelHealth(
+                    File.Exists(Path.Combine(_modelsDir, "section_classifier.zip")),
+                    sectionCount,
+                    20,
+                    TryExtractAccuracy(sectionLatest?.MetricsJson));
+
+                _modelHealthLabel.Text = $"模型健康度：列名[{columnHealth}]  NER[{nerHealth}]  章节[{sectionHealth}]";
             }
             catch { }
 
@@ -1261,6 +1430,28 @@ namespace DocExtractor.UI.Forms
                 _recommendCountLabel.Text = $"知识库：{count} 条";
             }
             catch { }
+        }
+
+        private static string ComputeModelHealth(bool modelExists, int sampleCount, int minSamples, double? accuracy)
+        {
+            if (!modelExists) return "未训练";
+            if (sampleCount < minSamples) return "待提升";
+            if (accuracy.HasValue)
+            {
+                if (accuracy.Value >= 0.95 && sampleCount >= 100) return "优秀";
+                if (accuracy.Value >= 0.90) return "良好";
+            }
+            return "可用";
+        }
+
+        private static double? TryExtractAccuracy(string? metricsText)
+        {
+            if (string.IsNullOrWhiteSpace(metricsText)) return null;
+            var match = System.Text.RegularExpressions.Regex.Match(metricsText, @"(\d+(?:\.\d+)?)%");
+            if (!match.Success) return null;
+            if (double.TryParse(match.Groups[1].Value, out var pct))
+                return pct / 100.0;
+            return null;
         }
 
         private void TryLoadModels()
@@ -1294,6 +1485,88 @@ namespace DocExtractor.UI.Forms
             form.AcceptButton = okBtn;
             form.CancelButton = cancelBtn;
             return form.ShowDialog() == DialogResult.OK ? textBox.Text.Trim() : string.Empty;
+        }
+
+        private List<string>? ShowExportFieldSelection(IReadOnlyList<FieldDefinition> fields)
+        {
+            using var form = new Form
+            {
+                Text = "选择导出字段",
+                Width = 420,
+                Height = 520,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                StartPosition = FormStartPosition.CenterParent,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            var hint = new Label
+            {
+                Text = "勾选需要导出的字段（默认全选）",
+                Left = 12,
+                Top = 12,
+                Width = 380
+            };
+
+            var checkedList = new CheckedListBox
+            {
+                Left = 12,
+                Top = 36,
+                Width = 380,
+                Height = 380,
+                CheckOnClick = true
+            };
+
+            foreach (var field in fields)
+            {
+                string display = string.IsNullOrWhiteSpace(field.DisplayName)
+                    ? field.FieldName
+                    : $"{field.DisplayName} ({field.FieldName})";
+                checkedList.Items.Add(display, true);
+            }
+
+            var selectAllBtn = new Button { Text = "全选", Left = 12, Top = 428, Width = 80 };
+            var clearAllBtn = new Button { Text = "全不选", Left = 100, Top = 428, Width = 80 };
+            var okBtn = new Button { Text = "确定", DialogResult = DialogResult.OK, Left = 236, Top = 460, Width = 75 };
+            var cancelBtn = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Left = 317, Top = 460, Width = 75 };
+
+            selectAllBtn.Click += (_, _) =>
+            {
+                for (int i = 0; i < checkedList.Items.Count; i++)
+                    checkedList.SetItemChecked(i, true);
+            };
+            clearAllBtn.Click += (_, _) =>
+            {
+                for (int i = 0; i < checkedList.Items.Count; i++)
+                    checkedList.SetItemChecked(i, false);
+            };
+
+            form.Controls.Add(hint);
+            form.Controls.Add(checkedList);
+            form.Controls.Add(selectAllBtn);
+            form.Controls.Add(clearAllBtn);
+            form.Controls.Add(okBtn);
+            form.Controls.Add(cancelBtn);
+            form.AcceptButton = okBtn;
+            form.CancelButton = cancelBtn;
+
+            if (form.ShowDialog() != DialogResult.OK)
+                return null;
+
+            var selected = new List<string>();
+            for (int i = 0; i < checkedList.Items.Count; i++)
+            {
+                if (checkedList.GetItemChecked(i))
+                    selected.Add(fields[i].FieldName);
+            }
+
+            return selected;
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            _loggerFactory?.Dispose();
+            base.OnFormClosed(e);
         }
     }
 }

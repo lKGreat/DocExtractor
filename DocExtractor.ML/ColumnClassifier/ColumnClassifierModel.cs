@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using DocExtractor.Core.Exceptions;
 using Microsoft.ML;
 
 namespace DocExtractor.ML.ColumnClassifier
@@ -35,11 +36,15 @@ namespace DocExtractor.ML.ColumnClassifier
                     _model = _mlContext.Model.Load(modelPath, out _);
                     _engine = _mlContext.Model.CreatePredictionEngine<ColumnInput, ColumnPrediction>(_model);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // 旧格式模型（SDCA）不兼容 TorchSharp，需要重新训练
                     _model = null;
                     _engine = null;
+                    throw new ModelException(
+                        $"列名分类模型加载失败：{ex.Message}",
+                        "column_classifier",
+                        modelPath,
+                        ex);
                 }
             }
         }

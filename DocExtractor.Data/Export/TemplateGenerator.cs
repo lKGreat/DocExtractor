@@ -175,9 +175,15 @@ namespace DocExtractor.Data.Export
             metaSheet.Cells[3, 1].Value = "列名匹配模式";
             metaSheet.Cells[3, 1].Style.Font.Bold = true;
             metaSheet.Cells[3, 2].Value = "HybridMlFirst";
+            metaSheet.Cells[4, 1].Value = "启用值归一化";
+            metaSheet.Cells[4, 1].Style.Font.Bold = true;
+            metaSheet.Cells[4, 2].Value = "是";
             var matchValidation = metaSheet.DataValidations.AddListValidation("B3");
             foreach (var name in Enum.GetNames(typeof(ColumnMatchMode)))
                 matchValidation.Formula.Values.Add(name);
+            var normValidation = metaSheet.DataValidations.AddListValidation("B4");
+            normValidation.Formula.Values.Add("是");
+            normValidation.Formula.Values.Add("否");
             metaSheet.Column(1).Width = 20;
             metaSheet.Column(2).Width = 30;
 
@@ -259,6 +265,9 @@ namespace DocExtractor.Data.Export
             metaSheet.Cells[3, 1].Value = "列名匹配模式";
             metaSheet.Cells[3, 1].Style.Font.Bold = true;
             metaSheet.Cells[3, 2].Value = config.ColumnMatch.ToString();
+            metaSheet.Cells[4, 1].Value = "启用值归一化";
+            metaSheet.Cells[4, 1].Style.Font.Bold = true;
+            metaSheet.Cells[4, 2].Value = config.EnableValueNormalization ? "是" : "否";
             metaSheet.Column(1).Width = 20;
             metaSheet.Column(2).Width = 30;
 

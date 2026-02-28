@@ -39,12 +39,18 @@ namespace DocExtractor.UI.Forms
             var toolMenu = new ToolStripMenuItem("工具(&T)");
             toolMenu.DropDownItems.Add(new ToolStripMenuItem("重新生成模板", null, (s, e) => OnRegenerateTemplates()));
             toolMenu.DropDownItems.Add(new ToolStripMenuItem("重新加载模型", null, (s, e) => TryLoadModels()));
+            toolMenu.DropDownItems.Add(new ToolStripMenuItem("模型版本管理", null, (s, e) => OnOpenModelManager()));
+            toolMenu.DropDownItems.Add(new ToolStripSeparator());
+            toolMenu.DropDownItems.Add(new ToolStripMenuItem("配置包管理器", null, (s, e) => OnOpenPackManager()));
+
+            var diagnoseMenu = new ToolStripMenuItem("诊断(&D)");
+            diagnoseMenu.DropDownItems.Add(new ToolStripMenuItem("系统健康度报告", null, (s, e) => OnOpenDiagnostics()));
 
             var helpMenu = new ToolStripMenuItem("帮助(&H)");
             helpMenu.DropDownItems.Add(new ToolStripMenuItem("关于", null, (s, e) =>
                 Helpers.MessageHelper.Info(this, "DocExtractor v1.0 \u2014 文档数据智能抽取系统")));
 
-            _menuStrip.Items.AddRange(new ToolStripItem[] { fileMenu, toolMenu, helpMenu });
+            _menuStrip.Items.AddRange(new ToolStripItem[] { fileMenu, toolMenu, diagnoseMenu, helpMenu });
 
             // ── 工具栏 ────────────────────────────────────────────────────────
             _toolbar = new Panel { Dock = DockStyle.Top, Height = 50, Padding = new Padding(8, 6, 8, 6) };
@@ -66,6 +72,13 @@ namespace DocExtractor.UI.Forms
                 Font = new Font("微软雅黑", 9, FontStyle.Bold)
             };
 
+            _previewBtn = new AntdUI.Button
+            {
+                Text = "快速预览",
+                Size = new Size(90, 36),
+                Font = new Font("微软雅黑", 9)
+            };
+
             _exportBtn = new AntdUI.Button
             {
                 Text = "导出结果",
@@ -79,7 +92,7 @@ namespace DocExtractor.UI.Forms
             {
                 configLabel, _configCombo,
                 new Label { Width = 16 },
-                _runBtn, _exportBtn
+                _previewBtn, _runBtn, _exportBtn
             });
             _toolbar.Controls.Add(toolFlow);
 
@@ -151,6 +164,20 @@ namespace DocExtractor.UI.Forms
 
             // ── 子 Tab：抽取结果 ──
             var resultTabPage = new TabPage { Text = "抽取结果" };
+            var resultTopPanel = new Panel { Dock = DockStyle.Top, Height = 36, Padding = new Padding(6, 6, 6, 4) };
+            var resultSearchLabel = new Label
+            {
+                Text = "快速搜索：",
+                Width = 68,
+                Dock = DockStyle.Left,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            _resultSearchBox = new TextBox
+            {
+                Dock = DockStyle.Fill
+            };
+            resultTopPanel.Controls.Add(_resultSearchBox);
+            resultTopPanel.Controls.Add(resultSearchLabel);
             _resultGrid = new DataGridView
             {
                 Dock = DockStyle.Fill,
@@ -165,6 +192,7 @@ namespace DocExtractor.UI.Forms
                 Font = new Font("微软雅黑", 9)
             };
             resultTabPage.Controls.Add(_resultGrid);
+            resultTabPage.Controls.Add(resultTopPanel);
 
             // ── 子 Tab：智能推荐 ──
             var recommendTabPage = new TabPage { Text = "智能推荐" };
@@ -295,7 +323,15 @@ namespace DocExtractor.UI.Forms
                 },
                 new DataGridViewCheckBoxColumn { Name = "IsRequired", HeaderText = "必填", FillWeight = 6 },
                 new DataGridViewTextBoxColumn { Name = "DefaultValue", HeaderText = "默认值", FillWeight = 12 },
-                new DataGridViewTextBoxColumn { Name = "Variants", HeaderText = "列名变体（逗号分隔）", FillWeight = 40 }
+                new DataGridViewTextBoxColumn { Name = "Variants", HeaderText = "列名变体（逗号分隔）", FillWeight = 35 },
+                new DataGridViewButtonColumn
+                {
+                    Name = "EditField",
+                    HeaderText = "编辑",
+                    Text = "编辑",
+                    UseColumnTextForButtonValue = true,
+                    FillWeight = 8
+                }
             });
 
             // 下：全局设置
@@ -303,8 +339,11 @@ namespace DocExtractor.UI.Forms
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 4,
+                RowCount = 2,
                 Padding = new Padding(8)
             };
+            settingsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+            settingsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             _headerRowsSpinner = new NumericUpDown { Minimum = 1, Maximum = 5, Value = 1, Width = 80 };
             _columnMatchCombo = new ComboBox
             {
@@ -312,11 +351,19 @@ namespace DocExtractor.UI.Forms
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Width = 180
             };
+            _valueNormalizationCheckBox = new CheckBox
+            {
+                Text = "启用抽取值归一化（推荐）",
+                Checked = true,
+                AutoSize = true
+            };
 
             settingsPanel.Controls.Add(new Label { Text = "表头行数：", TextAlign = ContentAlignment.MiddleRight, Width = 80 }, 0, 0);
             settingsPanel.Controls.Add(_headerRowsSpinner, 1, 0);
             settingsPanel.Controls.Add(new Label { Text = "列名匹配：", TextAlign = ContentAlignment.MiddleRight, Width = 80 }, 2, 0);
             settingsPanel.Controls.Add(_columnMatchCombo, 3, 0);
+            settingsPanel.Controls.Add(_valueNormalizationCheckBox, 0, 1);
+            settingsPanel.SetColumnSpan(_valueNormalizationCheckBox, 4);
 
             // 底部操作按钮
             var configBtnPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 42 };
@@ -375,7 +422,7 @@ namespace DocExtractor.UI.Forms
                 RowCount = 6,
                 ColumnCount = 1
             };
-            trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));   // 统计
+            trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 160));  // 统计
             trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 130));  // 训练参数
             trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));   // 操作按钮
             trainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 55));   // 结果对比
@@ -389,6 +436,14 @@ namespace DocExtractor.UI.Forms
             _nerSampleCountLabel = new Label { Text = "NER 标注样本：0 条", Width = 200, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
             _sectionSampleCountLabel = new Label { Text = "章节标题样本：0 条", Width = 200, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
             _knowledgeCountLabel = new Label { Text = "推荐知识库：0 条", Width = 200, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
+            _modelHealthLabel = new Label
+            {
+                Text = "模型健康度：--",
+                Width = 760,
+                Height = 30,
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = Color.FromArgb(32, 32, 32)
+            };
             _importCsvBtn = new AntdUI.Button { Text = "导入 CSV/Excel 标注", Size = new Size(160, 30) };
             _importSectionWordBtn = new AntdUI.Button { Text = "从 Word 导入章节标注", Size = new Size(170, 30) };
             _genFromKnowledgeBtn = new AntdUI.Button
@@ -397,11 +452,17 @@ namespace DocExtractor.UI.Forms
                 Type = AntdUI.TTypeMini.Primary,
                 Size = new Size(175, 30)
             };
+            _columnErrorAnalysisBtn = new AntdUI.Button
+            {
+                Text = "列名错误分析",
+                Size = new Size(120, 30)
+            };
             statsFlow.Controls.AddRange(new Control[]
             {
                 _colSampleCountLabel, _nerSampleCountLabel,
                 _sectionSampleCountLabel, _knowledgeCountLabel,
-                _genFromKnowledgeBtn, _importCsvBtn, _importSectionWordBtn
+                _modelHealthLabel,
+                _genFromKnowledgeBtn, _importCsvBtn, _importSectionWordBtn, _columnErrorAnalysisBtn
             });
             statsGroup.Controls.Add(statsFlow);
 
@@ -411,48 +472,59 @@ namespace DocExtractor.UI.Forms
             paramsLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             paramsLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             paramsLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+            // 固定宽度列：label(82) + control(66) 交替，最后两列吸收剩余空间
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));   // col0 label
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 66));   // col1 control
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));   // col2 label
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 66));   // col3 control
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));   // col4 label
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 66));   // col5 control
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));   // col6 label
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 66));   // col7 control
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));   // col8 overflow/checkbox
+            paramsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 0));    // col9 reserved
 
             // Row 0: 预设选择
-            _presetCombo = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDownList };
+            _presetCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
             _presetCombo.Items.AddRange(new object[] { "快速", "标准", "精细", "自定义" });
             _presetCombo.SelectedIndex = 1;
-            _cvFoldsSpinner = new NumericUpDown { Minimum = 0, Maximum = 10, Value = 5, Width = 55 };
-            _testFractionSpinner = new NumericUpDown { Minimum = 0.1m, Maximum = 0.5m, Value = 0.2m, Width = 55, DecimalPlaces = 1, Increment = 0.1m };
-            _augmentCheckbox = new CheckBox { Text = "数据增强", AutoSize = true, Checked = false };
+            _cvFoldsSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 0, Maximum = 10, Value = 5 };
+            _testFractionSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 0.1m, Maximum = 0.5m, Value = 0.2m, DecimalPlaces = 1, Increment = 0.1m };
+            _augmentCheckbox = new CheckBox { Text = "数据增强", AutoSize = true, Checked = false, Anchor = AnchorStyles.Left | AnchorStyles.Top };
 
-            paramsLayout.Controls.Add(new Label { Text = "预设:", TextAlign = ContentAlignment.MiddleRight, Width = 45 }, 0, 0);
+            paramsLayout.Controls.Add(new Label { Text = "预设:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 0, 0);
             paramsLayout.Controls.Add(_presetCombo, 1, 0);
-            paramsLayout.Controls.Add(new Label { Text = "CV折数:", TextAlign = ContentAlignment.MiddleRight, Width = 55 }, 2, 0);
+            paramsLayout.Controls.Add(new Label { Text = "CV折数:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 2, 0);
             paramsLayout.Controls.Add(_cvFoldsSpinner, 3, 0);
-            paramsLayout.Controls.Add(new Label { Text = "测试集:", TextAlign = ContentAlignment.MiddleRight, Width = 55 }, 4, 0);
+            paramsLayout.Controls.Add(new Label { Text = "测试集:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 4, 0);
             paramsLayout.Controls.Add(_testFractionSpinner, 5, 0);
             paramsLayout.Controls.Add(_augmentCheckbox, 6, 0);
 
             // Row 1: 列名 + NER 参数 (NAS-BERT: Epochs + BatchSize)
-            _colEpochsSpinner = new NumericUpDown { Minimum = 1, Maximum = 50, Value = 4, Width = 55 };
-            _colBatchSpinner = new NumericUpDown { Minimum = 4, Maximum = 128, Value = 32, Width = 55 };
-            _nerEpochsSpinner = new NumericUpDown { Minimum = 1, Maximum = 50, Value = 4, Width = 55 };
-            _nerBatchSpinner = new NumericUpDown { Minimum = 4, Maximum = 128, Value = 32, Width = 55 };
+            _colEpochsSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 1, Maximum = 50, Value = 4 };
+            _colBatchSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 4, Maximum = 128, Value = 32 };
+            _nerEpochsSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 1, Maximum = 50, Value = 4 };
+            _nerBatchSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 4, Maximum = 128, Value = 32 };
 
-            paramsLayout.Controls.Add(new Label { Text = "列名Epoch:", TextAlign = ContentAlignment.MiddleRight, Width = 72 }, 0, 1);
+            paramsLayout.Controls.Add(new Label { Text = "列名 Epoch:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 0, 1);
             paramsLayout.Controls.Add(_colEpochsSpinner, 1, 1);
-            paramsLayout.Controls.Add(new Label { Text = "列名Batch:", TextAlign = ContentAlignment.MiddleRight, Width = 72 }, 2, 1);
+            paramsLayout.Controls.Add(new Label { Text = "列名 Batch:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 2, 1);
             paramsLayout.Controls.Add(_colBatchSpinner, 3, 1);
-            paramsLayout.Controls.Add(new Label { Text = "NER Epoch:", TextAlign = ContentAlignment.MiddleRight, Width = 72 }, 4, 1);
+            paramsLayout.Controls.Add(new Label { Text = "NER Epoch:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 4, 1);
             paramsLayout.Controls.Add(_nerEpochsSpinner, 5, 1);
-            paramsLayout.Controls.Add(new Label { Text = "NER Batch:", TextAlign = ContentAlignment.MiddleRight, Width = 72 }, 6, 1);
+            paramsLayout.Controls.Add(new Label { Text = "NER Batch:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 6, 1);
             paramsLayout.Controls.Add(_nerBatchSpinner, 7, 1);
 
             // Row 2: 章节参数
-            _secTreesSpinner = new NumericUpDown { Minimum = 10, Maximum = 1000, Value = 200, Width = 60 };
-            _secLeavesSpinner = new NumericUpDown { Minimum = 5, Maximum = 100, Value = 20, Width = 55 };
-            _secMinLeafSpinner = new NumericUpDown { Minimum = 1, Maximum = 20, Value = 2, Width = 55 };
+            _secTreesSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 10, Maximum = 1000, Value = 200 };
+            _secLeavesSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 5, Maximum = 100, Value = 20 };
+            _secMinLeafSpinner = new NumericUpDown { Dock = DockStyle.Fill, Minimum = 1, Maximum = 20, Value = 2 };
 
-            paramsLayout.Controls.Add(new Label { Text = "章节树数:", TextAlign = ContentAlignment.MiddleRight, Width = 65 }, 0, 2);
+            paramsLayout.Controls.Add(new Label { Text = "章节树数:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 0, 2);
             paramsLayout.Controls.Add(_secTreesSpinner, 1, 2);
-            paramsLayout.Controls.Add(new Label { Text = "章节叶:", TextAlign = ContentAlignment.MiddleRight, Width = 55 }, 2, 2);
+            paramsLayout.Controls.Add(new Label { Text = "章节叶:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 2, 2);
             paramsLayout.Controls.Add(_secLeavesSpinner, 3, 2);
-            paramsLayout.Controls.Add(new Label { Text = "最小叶样本:", TextAlign = ContentAlignment.MiddleRight, Width = 80 }, 4, 2);
+            paramsLayout.Controls.Add(new Label { Text = "最小叶样本:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 4, 2);
             paramsLayout.Controls.Add(_secMinLeafSpinner, 5, 2);
 
             paramsGroup.Controls.Add(paramsLayout);
@@ -535,6 +607,7 @@ namespace DocExtractor.UI.Forms
         private MenuStrip _menuStrip;
         private Panel _toolbar;
         private ComboBox _configCombo;
+        private AntdUI.Button _previewBtn;
         private AntdUI.Button _runBtn;
         private AntdUI.Button _exportBtn;
 
@@ -555,6 +628,7 @@ namespace DocExtractor.UI.Forms
         private AntdUI.Button _clearFilesBtn;
         private TabControl _resultTabs;
         private DataGridView _resultGrid;
+        private TextBox _resultSearchBox;
         private ProgressBar _progressBar;
         private RichTextBox _logBox;
 
@@ -572,6 +646,7 @@ namespace DocExtractor.UI.Forms
         private DataGridView _fieldsGrid;
         private NumericUpDown _headerRowsSpinner;
         private ComboBox _columnMatchCombo;
+        private CheckBox _valueNormalizationCheckBox;
         private AntdUI.Button _saveConfigBtn;
         private AntdUI.Button _setDefaultBtn;
         private AntdUI.Button _newConfigBtn;
@@ -586,10 +661,12 @@ namespace DocExtractor.UI.Forms
         private Label _nerSampleCountLabel;
         private Label _sectionSampleCountLabel;
         private Label _knowledgeCountLabel;
+        private Label _modelHealthLabel;
         private AntdUI.Button _cancelTrainBtn;
         private AntdUI.Button _genFromKnowledgeBtn;
         private AntdUI.Button _importCsvBtn;
         private AntdUI.Button _importSectionWordBtn;
+        private AntdUI.Button _columnErrorAnalysisBtn;
         private Label _evalLabel;
         private Label _evalCompareLabel;
         private ProgressBar _trainProgressBar;

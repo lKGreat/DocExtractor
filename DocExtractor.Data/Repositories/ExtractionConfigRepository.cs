@@ -17,7 +17,8 @@ namespace DocExtractor.Data.Repositories
         public ExtractionConfigRepository(string dbPath)
         {
             bool isNew = !File.Exists(dbPath);
-            _conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+            _conn = new SQLiteConnection(
+                $"Data Source={dbPath};Version=3;Pooling=True;Max Pool Size=100;Journal Mode=WAL;");
             _conn.Open();
 
             if (isNew)
