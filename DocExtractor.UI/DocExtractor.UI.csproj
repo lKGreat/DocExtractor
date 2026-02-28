@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>DocExtractor.UI</AssemblyName>
+    <RootNamespace>DocExtractor.UI</RootNamespace>
+    <Nullable>enable</Nullable>
+    <LangVersion>9.0</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DocExtractor.Core\DocExtractor.Core.csproj" />
+    <ProjectReference Include="..\DocExtractor.ML\DocExtractor.ML.csproj" />
+    <ProjectReference Include="..\DocExtractor.Parsing\DocExtractor.Parsing.csproj" />
+    <ProjectReference Include="..\DocExtractor.Data\DocExtractor.Data.csproj" />
+  </ItemGroup>
+</Project>

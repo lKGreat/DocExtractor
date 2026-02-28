@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>DocExtractor.ML</AssemblyName>
+    <RootNamespace>DocExtractor.ML</RootNamespace>
+    <Nullable>enable</Nullable>
+    <LangVersion>9.0</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ML.NET 核心（兼容 .NET Standard 2.0 → .NET Framework 4.8） -->
+    <PackageReference Include="Microsoft.ML" Version="2.0.1" />
+    <!-- LightGBM 梯度提升（NER BIO 分类） -->
+    <PackageReference Include="Microsoft.ML.FastTree" Version="2.0.1" />
+    <!-- LightGBM 多分类 -->
+    <PackageReference Include="Microsoft.ML.LightGbm" Version="2.0.1" />
+    <!-- System.Data.SQLite 用于训练数据存取 -->
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
+    <PackageReference Include="CsvHelper" Version="27.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DocExtractor.Core\DocExtractor.Core.csproj" />
+  </ItemGroup>
+</Project>

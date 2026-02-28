@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>DocExtractor.Parsing</AssemblyName>
+    <RootNamespace>DocExtractor.Parsing</RootNamespace>
+    <Nullable>enable</Nullable>
+    <LangVersion>9.0</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Word 解析（无 Office 依赖） -->
+    <PackageReference Include="DocumentFormat.OpenXml" Version="2.20.0" />
+    <!-- Excel 高级解析（合并单元格、公式求值） -->
+    <PackageReference Include="EPPlus" Version="5.8.14" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DocExtractor.Core\DocExtractor.Core.csproj" />
+  </ItemGroup>
+</Project>
