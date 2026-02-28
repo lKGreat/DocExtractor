@@ -21,6 +21,8 @@ using DocExtractor.ML.Training;
 using DocExtractor.Parsing.Excel;
 using DocExtractor.Parsing.Word;
 using DocExtractor.UI.Helpers;
+using DocExtractor.UI.Logging;
+using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 
 namespace DocExtractor.UI.Forms
@@ -42,6 +44,9 @@ namespace DocExtractor.UI.Forms
         private List<(int Id, string Name)> _configItems = new List<(int, string)>();
         private int _currentConfigId = -1;
         private CancellationTokenSource _trainCts;
+        private ILoggerFactory _loggerFactory;
+        private ILogger _logger;
+        private ILogger _trainLogger;
 
         public MainForm()
         {
@@ -59,12 +64,35 @@ namespace DocExtractor.UI.Forms
             _configRepo.SeedBuiltInConfigs();
 
             InitializeComponent();
+            InitializeLogging();
             WireEvents();
             LoadConfigList();
             LoadConfigToGrids();
             RefreshTrainingStats();
             OnPresetChanged(null, EventArgs.Empty); // 初始化预设参数状态
             RefreshRecommendCombo();
+        }
+
+        private void InitializeLogging()
+        {
+            string logDir = Path.Combine(Application.StartupPath, "logs");
+            _loggerFactory = LoggerFactory.Create(builder =>
+            {
+                builder.SetMinimumLevel(LogLevel.Information);
+                builder.AddProvider(new UiFileLoggerProvider(WriteStructuredLogToUi, logDir));
+            });
+
+            _logger = _loggerFactory.CreateLogger("Pipeline");
+            _trainLogger = _loggerFactory.CreateLogger("Training");
+            _logger.LogInformation("应用启动：DocExtractor UI 初始化完成");
+        }
+
+        private void WriteStructuredLogToUi(string category, string line)
+        {
+            if (string.Equals(category, "Training", StringComparison.OrdinalIgnoreCase))
+                WriteTrainLogToUi(line);
+            else
+                WriteLogToUi(line);
         }
 
         // ── 事件绑定 ──────────────────────────────────────────────────────────
@@ -1133,23 +1161,45 @@ namespace DocExtractor.UI.Forms
 
         private void AppendLog(string message)
         {
-            if (_logBox.InvokeRequired)
+            if (_logger != null)
             {
-                _logBox.Invoke(new Action(() => AppendLog(message)));
+                _logger.LogInformation(message);
                 return;
             }
-            _logBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}\n");
-            _logBox.ScrollToCaret();
+            WriteLogToUi($"[{DateTime.Now:HH:mm:ss}] {message}");
         }
 
         private void AppendTrainLog(string message)
         {
-            if (_trainLogBox.InvokeRequired)
+            if (_trainLogger != null)
             {
-                _trainLogBox.Invoke(new Action(() => AppendTrainLog(message)));
+                _trainLogger.LogInformation(message);
+            }
+            else
+            {
+                WriteTrainLogToUi($"[{DateTime.Now:HH:mm:ss}] {message}");
+            }
+        }
+
+        private void WriteLogToUi(string line)
+        {
+            if (_logBox.InvokeRequired)
+            {
+                _logBox.Invoke(new Action<string>(WriteLogToUi), line);
                 return;
             }
-            _trainLogBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}\n");
+            _logBox.AppendText(line + Environment.NewLine);
+            _logBox.ScrollToCaret();
+        }
+
+        private void WriteTrainLogToUi(string line)
+        {
+            if (_trainLogBox.InvokeRequired)
+            {
+                _trainLogBox.Invoke(new Action<string>(WriteTrainLogToUi), line);
+                return;
+            }
+            _trainLogBox.AppendText(line + Environment.NewLine);
             _trainLogBox.ScrollToCaret();
         }
 
@@ -1294,6 +1344,12 @@ namespace DocExtractor.UI.Forms
             form.AcceptButton = okBtn;
             form.CancelButton = cancelBtn;
             return form.ShowDialog() == DialogResult.OK ? textBox.Text.Trim() : string.Empty;
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            _loggerFactory?.Dispose();
+            base.OnFormClosed(e);
         }
     }
 }

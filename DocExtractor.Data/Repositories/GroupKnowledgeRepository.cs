@@ -32,7 +32,8 @@ namespace DocExtractor.Data.Repositories
 
         public GroupKnowledgeRepository(string dbPath, IValueNormalizer? valueNormalizer = null)
         {
-            _conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+            _conn = new SQLiteConnection(
+                $"Data Source={dbPath};Version=3;Pooling=True;Max Pool Size=100;Journal Mode=WAL;");
             _conn.Open();
             _valueNormalizer = valueNormalizer ?? new DefaultValueNormalizer();
             EnsureTable();

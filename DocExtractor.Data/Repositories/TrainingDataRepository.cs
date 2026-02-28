@@ -37,7 +37,8 @@ namespace DocExtractor.Data.Repositories
 
         public TrainingDataRepository(string dbPath)
         {
-            _conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+            _conn = new SQLiteConnection(
+                $"Data Source={dbPath};Version=3;Pooling=True;Max Pool Size=100;Journal Mode=WAL;");
             _conn.Open();
             // 始终执行建表（全部用 CREATE TABLE IF NOT EXISTS，幂等安全）
             // 数据库文件由 ExtractionConfigRepository 先创建，此处补齐训练相关表

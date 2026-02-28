@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
-using System.Threading.Tasks;
 using DocExtractor.ML.ColumnClassifier;
 using DocExtractor.ML.EntityExtractor;
+using DocExtractor.ML.ModelRegistry;
 using DocExtractor.ML.SectionClassifier;
 using DocExtractor.ML.Training;
 
@@ -37,6 +37,8 @@ namespace DocExtractor.ML
         {
             var result = new UnifiedTrainingResult();
             Directory.CreateDirectory(modelsDir);
+            var registry = new ModelRegistryStore(modelsDir);
+            string parameterTag = BuildParameterTag(parameters);
 
             // Stage 1: 列名分类器 (0-33%)
             if (columnData.Count >= 10)
@@ -48,9 +50,23 @@ namespace DocExtractor.ML
                 cancellation.ThrowIfCancellationRequested();
 
                 var trainer = new ColumnClassifierTrainer(parameters.Seed);
-                string modelPath = Path.Combine(modelsDir, "column_classifier.zip");
-                result.ColumnEval = trainer.Train(columnData, modelPath, stageProgress, parameters, cancellation);
-                progress?.Report(("列名分类", $"完成: {result.ColumnEval}", 33));
+                string tempPath = Path.Combine(modelsDir, "_tmp_column_classifier_" + Guid.NewGuid().ToString("N") + ".zip");
+                try
+                {
+                    result.ColumnEval = trainer.Train(columnData, tempPath, stageProgress, parameters, cancellation);
+                    var version = registry.PublishVersion(
+                        "column_classifier",
+                        tempPath,
+                        result.ColumnEval.MicroAccuracy,
+                        columnData.Count,
+                        parameterTag);
+                    result.ColumnVersion = version.Version;
+                    progress?.Report(("列名分类", $"完成: {result.ColumnEval} | 版本: {version.Version}", 33));
+                }
+                finally
+                {
+                    TryDeleteTemp(tempPath);
+                }
             }
             else
             {
@@ -70,9 +86,23 @@ namespace DocExtractor.ML
                 cancellation.ThrowIfCancellationRequested();
 
                 var trainer = new NerTrainer(parameters.Seed);
-                string modelPath = Path.Combine(modelsDir, "ner_model.zip");
-                result.NerEval = trainer.Train(nerData, modelPath, stageProgress, parameters, cancellation);
-                progress?.Report(("NER", $"完成: {result.NerEval}", 66));
+                string tempPath = Path.Combine(modelsDir, "_tmp_ner_model_" + Guid.NewGuid().ToString("N") + ".zip");
+                try
+                {
+                    result.NerEval = trainer.Train(nerData, tempPath, stageProgress, parameters, cancellation);
+                    var version = registry.PublishVersion(
+                        "ner_model",
+                        tempPath,
+                        result.NerEval.MicroAccuracy,
+                        nerData.Count,
+                        parameterTag);
+                    result.NerVersion = version.Version;
+                    progress?.Report(("NER", $"完成: {result.NerEval} | 版本: {version.Version}", 66));
+                }
+                finally
+                {
+                    TryDeleteTemp(tempPath);
+                }
             }
             else
             {
@@ -92,9 +122,23 @@ namespace DocExtractor.ML
                 cancellation.ThrowIfCancellationRequested();
 
                 var trainer = new SectionClassifierTrainer(parameters.Seed);
-                string modelPath = Path.Combine(modelsDir, "section_classifier.zip");
-                result.SectionEval = trainer.Train(sectionData, modelPath, stageProgress, parameters, cancellation);
-                progress?.Report(("章节标题", $"完成: {result.SectionEval}", 100));
+                string tempPath = Path.Combine(modelsDir, "_tmp_section_classifier_" + Guid.NewGuid().ToString("N") + ".zip");
+                try
+                {
+                    result.SectionEval = trainer.Train(sectionData, tempPath, stageProgress, parameters, cancellation);
+                    var version = registry.PublishVersion(
+                        "section_classifier",
+                        tempPath,
+                        result.SectionEval.Accuracy,
+                        sectionData.Count,
+                        parameterTag);
+                    result.SectionVersion = version.Version;
+                    progress?.Report(("章节标题", $"完成: {result.SectionEval} | 版本: {version.Version}", 100));
+                }
+                finally
+                {
+                    TryDeleteTemp(tempPath);
+                }
             }
             else
             {
@@ -104,6 +148,28 @@ namespace DocExtractor.ML
 
             return result;
         }
+
+        private static void TryDeleteTemp(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch
+            {
+                // 临时文件删除失败不影响主流程
+            }
+        }
+
+        private static string BuildParameterTag(TrainingParameters parameters)
+        {
+            return $"Seed={parameters.Seed};TestFraction={parameters.TestFraction};" +
+                   $"ColEpoch={parameters.ColumnEpochs};ColBatch={parameters.ColumnBatchSize};" +
+                   $"NerEpoch={parameters.NerEpochs};NerBatch={parameters.NerBatchSize};" +
+                   $"SecTrees={parameters.SectionTrees};SecLeaves={parameters.SectionLeaves};" +
+                   $"SecMinLeaf={parameters.SectionMinLeaf};Aug={parameters.EnableAugmentation}";
+        }
     }
 
     public class UnifiedTrainingResult
@@ -111,6 +177,9 @@ namespace DocExtractor.ML
         public TrainingEvaluation? ColumnEval { get; set; }
         public NerTrainingResult? NerEval { get; set; }
         public SectionTrainingEvaluation? SectionEval { get; set; }
+        public string? ColumnVersion { get; set; }
+        public string? NerVersion { get; set; }
+        public string? SectionVersion { get; set; }
 
         public string? ColumnSkipReason { get; set; }
         public string? NerSkipReason { get; set; }
@@ -119,11 +188,11 @@ namespace DocExtractor.ML
         public override string ToString()
         {
             var parts = new List<string>();
-            if (ColumnEval != null) parts.Add($"列名: {ColumnEval}");
+            if (ColumnEval != null) parts.Add($"列名: {ColumnEval}" + (ColumnVersion != null ? $" (版本 {ColumnVersion})" : ""));
             else if (ColumnSkipReason != null) parts.Add($"列名: 跳过 ({ColumnSkipReason})");
-            if (NerEval != null) parts.Add($"NER: {NerEval}");
+            if (NerEval != null) parts.Add($"NER: {NerEval}" + (NerVersion != null ? $" (版本 {NerVersion})" : ""));
             else if (NerSkipReason != null) parts.Add($"NER: 跳过 ({NerSkipReason})");
-            if (SectionEval != null) parts.Add($"章节: {SectionEval}");
+            if (SectionEval != null) parts.Add($"章节: {SectionEval}" + (SectionVersion != null ? $" (版本 {SectionVersion})" : ""));
             else if (SectionSkipReason != null) parts.Add($"章节: 跳过 ({SectionSkipReason})");
             return string.Join("\n", parts);
         }
