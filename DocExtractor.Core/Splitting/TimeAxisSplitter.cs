@@ -23,11 +23,11 @@ namespace DocExtractor.Core.Splitting
             RegexOptions.Compiled);
 
         private static readonly Regex StepValuePattern = new Regex(
-            @"([+-]?\d+\.?\d*)",
+            @"(0x[0-9a-fA-F]+|[+-]?\d+\.?\d*)",
             RegexOptions.Compiled);
 
         private static readonly Regex StepTimePattern = new Regex(
-            @"[（(]\s*(\d+\.?\d*)\s*[a-zA-Z]*\s*后?\s*[）)]",
+            @"[（(]\s*(?:持续\s*)?(\d+\.?\d*)\s*(?:分钟|min)\s*[）)]|[（(]\s*(\d+\.?\d*)\s*[a-zA-Z]*\s*后?\s*[）)]",
             RegexOptions.Compiled);
 
         // ── Pattern 2: Transition with tolerance ────────────────────────────
@@ -131,19 +131,17 @@ namespace DocExtractor.Core.Splitting
                 string trimmed = seg.Trim();
                 if (trimmed.Length == 0) continue;
 
-                // Remove trailing annotations like （示波器保留波形六档）
                 var valueMatch = StepValuePattern.Match(trimmed);
                 if (!valueMatch.Success) continue;
 
                 string numStr = valueMatch.Groups[1].Value;
+                bool isHex = numStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
 
-                var timeMatch = StepTimePattern.Match(trimmed);
-                string time = timeMatch.Success
-                    ? timeMatch.Groups[1].Value
-                    : defaultTime.ToString(CultureInfo.InvariantCulture);
+                string time = ExtractStepTime(trimmed, defaultTime);
 
                 string finalValue;
-                if (tolerance > 0 && double.TryParse(numStr, NumberStyles.Float, CultureInfo.InvariantCulture, out double num))
+                if (!isHex && tolerance > 0 &&
+                    double.TryParse(numStr, NumberStyles.Float, CultureInfo.InvariantCulture, out double num))
                 {
                     double lo = num - tolerance;
                     double hi = num + tolerance;
@@ -158,6 +156,30 @@ namespace DocExtractor.Core.Splitting
             }
 
             return results.Count >= 2 ? results : null;
+        }
+
+        /// <summary>
+        /// Extracts time from a step segment, handling both seconds and minutes formats.
+        /// </summary>
+        private static string ExtractStepTime(string segment, double defaultTime)
+        {
+            var timeMatch = StepTimePattern.Match(segment);
+            if (!timeMatch.Success)
+                return defaultTime.ToString(CultureInfo.InvariantCulture);
+
+            // Group 1: minutes format (持续N分钟) → convert to seconds
+            if (timeMatch.Groups[1].Success && timeMatch.Groups[1].Length > 0)
+            {
+                if (double.TryParse(timeMatch.Groups[1].Value, NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out double minutes))
+                    return FormatNumber(minutes * 60);
+            }
+
+            // Group 2: seconds format (Ns后)
+            if (timeMatch.Groups[2].Success && timeMatch.Groups[2].Length > 0)
+                return timeMatch.Groups[2].Value;
+
+            return defaultTime.ToString(CultureInfo.InvariantCulture);
         }
 
         private static List<StepResult> TryTransitionWithTolerance(string input)

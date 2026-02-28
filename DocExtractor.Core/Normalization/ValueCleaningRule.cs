@@ -23,7 +23,16 @@ namespace DocExtractor.Core.Normalization
         NumberWithParenAnnotation,
 
         /// <summary>数字+单位后缀：420s → 420</summary>
-        NumberWithUnitSuffix
+        NumberWithUnitSuffix,
+
+        /// <summary>值±公差：220V±10V → 210/230</summary>
+        ValueWithTolerance,
+
+        /// <summary>十六进制+括号描述：0x2（当前阴极B） → 0x2</summary>
+        HexWithParenDescription,
+
+        /// <summary>中文文本映射为零：不变 → 0</summary>
+        ChineseTextToZero
     }
 
     /// <summary>
@@ -95,6 +104,33 @@ namespace DocExtractor.Core.Normalization
                     Example = "420s → 420",
                     IsEnabled = true,
                     Priority = 60
+                },
+                new ValueCleaningRule
+                {
+                    RuleType = CleaningRuleType.ValueWithTolerance,
+                    DisplayName = "值±公差",
+                    Description = "将值±公差转换为范围",
+                    Example = "220V±10V → 210/230",
+                    IsEnabled = true,
+                    Priority = 25
+                },
+                new ValueCleaningRule
+                {
+                    RuleType = CleaningRuleType.HexWithParenDescription,
+                    DisplayName = "十六进制+括号描述",
+                    Description = "提取十六进制值，去除括号中的中文描述",
+                    Example = "0x2（当前阴极B） → 0x2",
+                    IsEnabled = true,
+                    Priority = 15
+                },
+                new ValueCleaningRule
+                {
+                    RuleType = CleaningRuleType.ChineseTextToZero,
+                    DisplayName = "中文文本归零",
+                    Description = "将「不变」等中文文本映射为 0",
+                    Example = "不变 → 0",
+                    IsEnabled = true,
+                    Priority = 70
                 }
             };
         }

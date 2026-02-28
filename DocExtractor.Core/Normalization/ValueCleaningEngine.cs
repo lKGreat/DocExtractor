@@ -45,6 +45,24 @@ namespace DocExtractor.Core.Normalization
             @"^\s*(\d+)\s*[a-zA-Z]+\s*$",
             RegexOptions.Compiled);
 
+        // ── ValueWithTolerance ───────────────────────────────────────────────
+        // 220V±10V, 24.5V±0.5V, 1.5A±0.1A
+        private static readonly Regex ValueTolerancePattern = new Regex(
+            @"^\s*([+-]?\d+\.?\d*)\s*[a-zA-Z]*\s*[±]\s*(\d+\.?\d*)\s*[a-zA-Z]*\s*$",
+            RegexOptions.Compiled);
+
+        // ── HexWithParenDescription ──────────────────────────────────────────
+        // 0x2（当前阴极B）, 0x01(待机模式)
+        private static readonly Regex HexParenDescPattern = new Regex(
+            @"^\s*(0x[0-9a-fA-F]+)\s*[（(][\u4e00-\u9fff\w].*[）)]\s*$",
+            RegexOptions.Compiled);
+
+        // ── ChineseTextToZero ────────────────────────────────────────────────
+        // 不变
+        private static readonly Regex ChineseZeroPattern = new Regex(
+            @"^\s*(不变|无变化|保持不变|维持)\s*$",
+            RegexOptions.Compiled);
+
         /// <summary>
         /// 按优先级依次尝试清洗规则，第一个匹配即返回清洗结果。
         /// 若无规则匹配则返回原始值。
@@ -86,6 +104,12 @@ namespace DocExtractor.Core.Normalization
                     return TryNumberWithParenAnnotation(input);
                 case CleaningRuleType.NumberWithUnitSuffix:
                     return TryNumberWithUnitSuffix(input);
+                case CleaningRuleType.ValueWithTolerance:
+                    return TryValueWithTolerance(input);
+                case CleaningRuleType.HexWithParenDescription:
+                    return TryHexWithParenDescription(input);
+                case CleaningRuleType.ChineseTextToZero:
+                    return TryChineseTextToZero(input);
                 default:
                     return null;
             }
@@ -134,6 +158,41 @@ namespace DocExtractor.Core.Normalization
         {
             var m = NumUnitSuffixPattern.Match(input);
             return m.Success ? m.Groups[1].Value : null;
+        }
+
+        private static string TryValueWithTolerance(string input)
+        {
+            var m = ValueTolerancePattern.Match(input);
+            if (!m.Success) return null;
+
+            if (!double.TryParse(m.Groups[1].Value,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double center) ||
+                !double.TryParse(m.Groups[2].Value,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double tol))
+                return null;
+
+            double lo = center - tol;
+            double hi = center + tol;
+            return FormatNum(lo) + "/" + FormatNum(hi);
+        }
+
+        private static string TryHexWithParenDescription(string input)
+        {
+            var m = HexParenDescPattern.Match(input);
+            return m.Success ? m.Groups[1].Value : null;
+        }
+
+        private static string TryChineseTextToZero(string input)
+        {
+            var m = ChineseZeroPattern.Match(input);
+            return m.Success ? "0" : null;
+        }
+
+        private static string FormatNum(double value)
+        {
+            return value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
         }
     }
 }
