@@ -158,6 +158,20 @@ namespace DocExtractor.UI.Forms
 
             // ── 子 Tab：抽取结果 ──
             var resultTabPage = new TabPage { Text = "抽取结果" };
+            var resultTopPanel = new Panel { Dock = DockStyle.Top, Height = 36, Padding = new Padding(6, 6, 6, 4) };
+            var resultSearchLabel = new Label
+            {
+                Text = "快速搜索：",
+                Width = 68,
+                Dock = DockStyle.Left,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            _resultSearchBox = new TextBox
+            {
+                Dock = DockStyle.Fill
+            };
+            resultTopPanel.Controls.Add(_resultSearchBox);
+            resultTopPanel.Controls.Add(resultSearchLabel);
             _resultGrid = new DataGridView
             {
                 Dock = DockStyle.Fill,
@@ -172,6 +186,7 @@ namespace DocExtractor.UI.Forms
                 Font = new Font("微软雅黑", 9)
             };
             resultTabPage.Controls.Add(_resultGrid);
+            resultTabPage.Controls.Add(resultTopPanel);
 
             // ── 子 Tab：智能推荐 ──
             var recommendTabPage = new TabPage { Text = "智能推荐" };
@@ -574,6 +589,7 @@ namespace DocExtractor.UI.Forms
         private AntdUI.Button _clearFilesBtn;
         private TabControl _resultTabs;
         private DataGridView _resultGrid;
+        private TextBox _resultSearchBox;
         private ProgressBar _progressBar;
         private RichTextBox _logBox;
 

@@ -29,6 +29,7 @@ namespace DocExtractor.UI.Forms
         // ── 状态 ─────────────────────────────────────────────────────────────
         private ExtractionConfig _currentConfig = new ExtractionConfig();
         private List<ExtractedRecord> _lastResults = new List<ExtractedRecord>();
+        private List<ExtractedRecord> _displayedCompleteResults = new List<ExtractedRecord>();
         private readonly string _dbPath;
         private readonly string _modelsDir;
         private ColumnClassifierModel _columnModel;
@@ -109,6 +110,7 @@ namespace DocExtractor.UI.Forms
             _previewBtn.Click += OnQuickPreview;
             _runBtn.Click += OnRunExtraction;
             _exportBtn.Click += OnExport;
+            _resultSearchBox.TextChanged += (s, e) => ApplyResultFilter();
 
             _fileListBox.DragEnter += (s, e) =>
             {
@@ -270,6 +272,8 @@ namespace DocExtractor.UI.Forms
             _resultGrid.Rows.Clear();
             _resultGrid.Columns.Clear();
             _lastResults.Clear();
+            _displayedCompleteResults.Clear();
+            _resultSearchBox.Text = string.Empty;
 
             var files = _fileListBox.Items.Cast<string>().ToList();
             var config = _currentConfig;
@@ -305,7 +309,8 @@ namespace DocExtractor.UI.Forms
 
                 _lastResults = results.SelectMany(r => r.Records).ToList();
                 var completeResults = _lastResults.Where(r => r.IsComplete).ToList();
-                ShowResults(completeResults, config.Fields);
+                _displayedCompleteResults = completeResults;
+                ShowResults(_displayedCompleteResults, config.Fields);
 
                 int total = _lastResults.Count;
                 int complete = completeResults.Count;
@@ -1071,6 +1076,31 @@ namespace DocExtractor.UI.Forms
 
                 _resultGrid.Rows.Add(row);
             }
+        }
+
+        private void ApplyResultFilter()
+        {
+            if (_displayedCompleteResults.Count == 0)
+                return;
+
+            string keyword = _resultSearchBox.Text?.Trim() ?? string.Empty;
+            if (keyword.Length == 0)
+            {
+                ShowResults(_displayedCompleteResults, _currentConfig.Fields);
+                return;
+            }
+
+            var filtered = _displayedCompleteResults
+                .Where(r =>
+                    Path.GetFileName(r.SourceFile).IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0
+                    || r.Fields.Any(kv =>
+                        (!string.IsNullOrWhiteSpace(kv.Key)
+                         && kv.Key.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                        || (!string.IsNullOrWhiteSpace(kv.Value)
+                            && kv.Value.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)))
+                .ToList();
+
+            ShowResults(filtered, _currentConfig.Fields);
         }
 
         private void AppendLog(string message)
