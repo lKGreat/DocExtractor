@@ -8,20 +8,17 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using DocExtractor.Core.Interfaces;
 using DocExtractor.Core.Models;
-using DocExtractor.Core.Pipeline;
 using DocExtractor.Data.Export;
 using DocExtractor.Data.Repositories;
 using DocExtractor.ML;
 using DocExtractor.ML.ColumnClassifier;
 using DocExtractor.ML.EntityExtractor;
-using DocExtractor.ML.Inference;
 using DocExtractor.ML.Recommendation;
 using DocExtractor.ML.SectionClassifier;
 using DocExtractor.ML.Training;
-using DocExtractor.Parsing.Excel;
-using DocExtractor.Parsing.Word;
 using DocExtractor.UI.Helpers;
 using DocExtractor.UI.Logging;
+using DocExtractor.UI.Services;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 
@@ -47,6 +44,7 @@ namespace DocExtractor.UI.Forms
         private ILoggerFactory _loggerFactory;
         private ILogger _logger;
         private ILogger _trainLogger;
+        private readonly ExtractionWorkflowService _extractionService = new ExtractionWorkflowService();
 
         public MainForm()
         {
@@ -227,17 +225,13 @@ namespace DocExtractor.UI.Forms
             {
                 var results = await Task.Run(() =>
                 {
-                    var normalizer = new HybridColumnNormalizer(_columnModel, config.ColumnMatch);
-                    // 构建混合章节标题检测器（规则 + ML 三层级联）
-                    var ruleDetector = new SectionHeadingDetector();
-                    var hybridHeadingDetector = new HybridSectionHeadingDetector(ruleDetector, _sectionModel);
-                    var parsers = new IDocumentParser[]
-                    {
-                        new WordDocumentParser(hybridHeadingDetector),
-                        new ExcelDocumentParser(config.HeaderRowCount, config.TargetSheets)
-                    };
-                    var pipeline = new ExtractionPipeline(parsers, normalizer, _nerModel);
-                    return pipeline.ExecuteBatch(files, config, progress);
+                    return _extractionService.ExecuteBatch(
+                        files,
+                        config,
+                        _columnModel,
+                        _nerModel,
+                        _sectionModel,
+                        progress);
                 });
 
                 // 显示管道错误（解析异常等）
