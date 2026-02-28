@@ -137,6 +137,7 @@ namespace DocExtractor.UI.Forms
             _trainColumnBtn.Click += OnTrainColumnClassifier;
             _trainNerBtn.Click += OnTrainNer;
             _trainSectionBtn.Click += OnTrainSectionClassifier;
+            _genFromKnowledgeBtn.Click += OnGenerateFromKnowledge;
             _importCsvBtn.Click += OnImportTrainingData;
             _importSectionWordBtn.Click += OnImportSectionFromWord;
             _presetCombo.SelectedIndexChanged += OnPresetChanged;
@@ -805,12 +806,64 @@ namespace DocExtractor.UI.Forms
             }
         }
 
+        private async void OnGenerateFromKnowledge(object sender, EventArgs e)
+        {
+            _genFromKnowledgeBtn.Enabled = false;
+            _trainProgressBar.Style = ProgressBarStyle.Marquee;
+            AppendTrainLog("从知识库生成训练数据...");
+
+            try
+            {
+                // 收集所有内置配置（提供 KnownColumnVariants）
+                var configs = DocExtractor.Core.Models.BuiltInConfigs.GetAll().ToArray();
+
+                var (colAdded, secPosAdded, secNegAdded) = await Task.Run(() =>
+                {
+                    using var repo = new TrainingDataRepository(_dbPath);
+                    return repo.GenerateFromKnowledge(configs);
+                });
+
+                RefreshTrainingStats();
+
+                string summary =
+                    $"列名分类样本  新增 {colAdded} 条\n" +
+                    $"章节标题正样本 新增 {secPosAdded} 条（知识库中的组名）\n" +
+                    $"章节标题负样本 新增 {secNegAdded} 条（知识库中的细则项名）";
+
+                AppendTrainLog($"\n知识库训练数据生成完成：\n{summary}");
+
+                if (colAdded + secPosAdded + secNegAdded == 0)
+                {
+                    MessageHelper.Warn(this,
+                        "知识库中无新数据可生成（数据已全部存在，或知识库为空）。\n" +
+                        "请先通过「开始抽取」生成抽取结果，抽取完成后系统会自动学习知识库。");
+                }
+                else
+                {
+                    MessageHelper.Success(this,
+                        $"已从知识库自动生成训练数据：\n{summary}\n\n" +
+                        "现在可以直接点击训练按钮开始训练！");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendTrainLog($"\n生成失败: {ex.Message}");
+                MessageHelper.Error(this, $"生成失败：{ex.Message}");
+            }
+            finally
+            {
+                _genFromKnowledgeBtn.Enabled = true;
+                _trainProgressBar.Style = ProgressBarStyle.Continuous;
+            }
+        }
+
         // ── 智能推荐 ────────────────────────────────────────────────────────────
 
         private void AutoLearnGroupKnowledge(List<ExtractedRecord> completeResults)
         {
             try
             {
+                // 只处理含组名的记录
                 var withGroup = completeResults
                     .Where(r => r.Fields.ContainsKey("GroupName")
                                 && !string.IsNullOrWhiteSpace(r.Fields["GroupName"]))
@@ -819,12 +872,44 @@ namespace DocExtractor.UI.Forms
                 if (withGroup.Count == 0) return;
 
                 using var repo = new GroupKnowledgeRepository(_dbPath);
-                var groups = withGroup.GroupBy(r => r.Fields["GroupName"]).ToList();
 
-                foreach (var g in groups)
-                    repo.AddGroupItems(g.Key, g.ToList());
+                // 按来源文件分组，逐文件做"先清后录"（替换模式）
+                var byFile = withGroup
+                    .GroupBy(r => r.SourceFile ?? string.Empty)
+                    .ToList();
 
-                AppendLog($"知识库已学习 {groups.Count} 个组、{withGroup.Count} 条记录");
+                int totalGroups = 0, totalInserted = 0, replacedFiles = 0;
+
+                foreach (var fileGroup in byFile)
+                {
+                    string sourceFile = fileGroup.Key;
+
+                    // 判断是否已录入过（用于日志提示）
+                    bool wasLearned = repo.IsSourceFileLearned(sourceFile);
+
+                    // 组名 → 该文件下的记录列表
+                    var groupDict = fileGroup
+                        .GroupBy(r => r.Fields["GroupName"])
+                        .ToDictionary(
+                            g => g.Key,
+                            g => (IReadOnlyList<ExtractedRecord>)g.ToList());
+
+                    // 替换写入（内部先 DELETE 该文件旧记录，再 INSERT）
+                    int inserted = repo.ReplaceSourceFileItems(groupDict, sourceFile);
+
+                    totalGroups   += groupDict.Count;
+                    totalInserted += inserted;
+                    if (wasLearned) replacedFiles++;
+
+                    string action = wasLearned ? "更新" : "新录";
+                    AppendLog($"知识库{action}：{System.IO.Path.GetFileName(sourceFile)} " +
+                              $"→ {groupDict.Count} 个组 / {inserted} 条细则");
+                }
+
+                if (replacedFiles > 0)
+                    AppendLog($"[去重] {replacedFiles} 个文件已存在旧记录，已自动清空后重新录入");
+
+                AppendLog($"知识库合计学习 {totalGroups} 个组、{totalInserted} 条记录（共 {byFile.Count} 个文件）");
 
                 // 刷新推荐面板的组名下拉列表和知识库计数
                 RefreshRecommendCombo();

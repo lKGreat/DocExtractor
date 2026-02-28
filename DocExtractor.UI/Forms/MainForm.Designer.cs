@@ -362,7 +362,18 @@ namespace DocExtractor.UI.Forms
             _knowledgeCountLabel = new Label { Text = "推荐知识库：0 条", Width = 200, Height = 30, TextAlign = ContentAlignment.MiddleLeft };
             _importCsvBtn = new AntdUI.Button { Text = "导入 CSV/Excel 标注", Size = new Size(160, 30) };
             _importSectionWordBtn = new AntdUI.Button { Text = "从 Word 导入章节标注", Size = new Size(170, 30) };
-            statsFlow.Controls.AddRange(new Control[] { _colSampleCountLabel, _nerSampleCountLabel, _sectionSampleCountLabel, _knowledgeCountLabel, _importCsvBtn, _importSectionWordBtn });
+            _genFromKnowledgeBtn = new AntdUI.Button
+            {
+                Text = "从知识库生成训练数据",
+                Type = AntdUI.TTypeMini.Primary,
+                Size = new Size(175, 30)
+            };
+            statsFlow.Controls.AddRange(new Control[]
+            {
+                _colSampleCountLabel, _nerSampleCountLabel,
+                _sectionSampleCountLabel, _knowledgeCountLabel,
+                _genFromKnowledgeBtn, _importCsvBtn, _importSectionWordBtn
+            });
             statsGroup.Controls.Add(statsFlow);
 
             // ── 训练参数 ──
@@ -549,6 +560,7 @@ namespace DocExtractor.UI.Forms
         private AntdUI.Button _trainNerBtn;
         private AntdUI.Button _trainSectionBtn;
         private AntdUI.Button _cancelTrainBtn;
+        private AntdUI.Button _genFromKnowledgeBtn;
         private AntdUI.Button _importCsvBtn;
         private AntdUI.Button _importSectionWordBtn;
         private Label _evalLabel;

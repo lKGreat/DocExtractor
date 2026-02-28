@@ -31,14 +31,125 @@ namespace DocExtractor.Data.Repositories
                     RequiredValue TEXT,
                     OtherFieldsJson TEXT,
                     SourceFile TEXT,
+                    SourceFileNormalized TEXT,
                     CreatedAt TEXT DEFAULT (datetime('now'))
                 );
-                CREATE INDEX IF NOT EXISTS idx_gik_group ON GroupItemKnowledge(GroupNameNormalized);";
+                CREATE INDEX IF NOT EXISTS idx_gik_group ON GroupItemKnowledge(GroupNameNormalized);
+                CREATE INDEX IF NOT EXISTS idx_gik_src  ON GroupItemKnowledge(SourceFileNormalized);";
             cmd.ExecuteNonQuery();
+
+            // 兼容旧表：补充 SourceFileNormalized 列（旧库可能没有）
+            try
+            {
+                using var alter = _conn.CreateCommand();
+                alter.CommandText = "ALTER TABLE GroupItemKnowledge ADD COLUMN SourceFileNormalized TEXT";
+                alter.ExecuteNonQuery();
+            }
+            catch { /* 列已存在，忽略 */ }
         }
 
         /// <summary>
-        /// 批量写入一个组的细则项（从抽取结果自动学习）
+        /// 判断某文件是否已录入知识库
+        /// </summary>
+        public bool IsSourceFileLearned(string sourceFile)
+        {
+            if (string.IsNullOrWhiteSpace(sourceFile)) return false;
+            string norm = NormalizeSourceFile(sourceFile);
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM GroupItemKnowledge WHERE SourceFileNormalized=@s";
+            cmd.Parameters.AddWithValue("@s", norm);
+            return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+        }
+
+        /// <summary>
+        /// 删除某文件贡献的所有知识库记录（为替换模式做准备）
+        /// </summary>
+        public int DeleteBySourceFile(string sourceFile)
+        {
+            if (string.IsNullOrWhiteSpace(sourceFile)) return 0;
+            string norm = NormalizeSourceFile(sourceFile);
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "DELETE FROM GroupItemKnowledge WHERE SourceFileNormalized=@s";
+            cmd.Parameters.AddWithValue("@s", norm);
+            return cmd.ExecuteNonQuery();
+        }
+
+        /// <summary>
+        /// 以"替换"模式批量写入一个来源文件的所有组及细则项。
+        /// 先删除该文件的旧记录，再逐组写入，保证同文件不重复录入。
+        /// </summary>
+        /// <param name="recordsByGroup">分组后的记录字典：组名 → 记录列表</param>
+        /// <param name="sourceFile">来源文件路径（用于去重索引）</param>
+        /// <returns>写入的细则条数</returns>
+        public int ReplaceSourceFileItems(
+            IReadOnlyDictionary<string, IReadOnlyList<ExtractedRecord>> recordsByGroup,
+            string sourceFile)
+        {
+            string normSrc = NormalizeSourceFile(sourceFile);
+
+            using var tx = _conn.BeginTransaction();
+
+            // 先清除该文件的旧数据
+            using (var delCmd = _conn.CreateCommand())
+            {
+                delCmd.Transaction = tx;
+                delCmd.CommandText = "DELETE FROM GroupItemKnowledge WHERE SourceFileNormalized=@s";
+                delCmd.Parameters.AddWithValue("@s", normSrc);
+                delCmd.ExecuteNonQuery();
+            }
+
+            int inserted = 0;
+            using var cmd = _conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"INSERT INTO GroupItemKnowledge
+                (GroupNameNormalized, ItemName, RequiredValue, OtherFieldsJson, SourceFile, SourceFileNormalized)
+                VALUES (@gn, @item, @req, @other, @src, @nsrc)";
+
+            var pGn   = cmd.Parameters.Add("@gn",   System.Data.DbType.String);
+            var pItem = cmd.Parameters.Add("@item",  System.Data.DbType.String);
+            var pReq  = cmd.Parameters.Add("@req",   System.Data.DbType.String);
+            var pOther= cmd.Parameters.Add("@other", System.Data.DbType.String);
+            var pSrc  = cmd.Parameters.Add("@src",   System.Data.DbType.String);
+            var pNSrc = cmd.Parameters.Add("@nsrc",  System.Data.DbType.String);
+
+            pSrc.Value  = sourceFile;
+            pNSrc.Value = normSrc;
+
+            foreach (var kv in recordsByGroup)
+            {
+                string normalizedGroup = NormalizeGroupName(kv.Key);
+                pGn.Value = normalizedGroup;
+
+                foreach (var r in kv.Value)
+                {
+                    string itemName = r.GetField("ItemName");
+                    if (string.IsNullOrWhiteSpace(itemName)) continue;
+
+                    pItem.Value = itemName.Trim();
+                    pReq.Value  = (object)r.GetField("RequiredValue") ?? DBNull.Value;
+
+                    var otherFields = new Dictionary<string, string>();
+                    foreach (var field in r.Fields)
+                    {
+                        if (field.Key != "GroupName" && field.Key != "ItemName"
+                            && field.Key != "RequiredValue" && !string.IsNullOrWhiteSpace(field.Value))
+                            otherFields[field.Key] = field.Value;
+                    }
+                    pOther.Value = otherFields.Count > 0
+                        ? (object)JsonConvert.SerializeObject(otherFields)
+                        : DBNull.Value;
+
+                    cmd.ExecuteNonQuery();
+                    inserted++;
+                }
+            }
+
+            tx.Commit();
+            return inserted;
+        }
+
+        /// <summary>
+        /// 批量写入一个组的细则项（兼容旧接口，不清除旧数据）
         /// </summary>
         public void AddGroupItems(string groupName, IReadOnlyList<ExtractedRecord> records)
         {
@@ -46,26 +157,31 @@ namespace DocExtractor.Data.Repositories
 
             using var tx = _conn.BeginTransaction();
             using var cmd = _conn.CreateCommand();
+            cmd.Transaction = tx;
             cmd.CommandText = @"INSERT INTO GroupItemKnowledge
-                (GroupNameNormalized, ItemName, RequiredValue, OtherFieldsJson, SourceFile)
-                VALUES (@gn, @item, @req, @other, @src)";
+                (GroupNameNormalized, ItemName, RequiredValue, OtherFieldsJson, SourceFile, SourceFileNormalized)
+                VALUES (@gn, @item, @req, @other, @src, @nsrc)";
 
-            var pGn = cmd.Parameters.Add("@gn", System.Data.DbType.String);
-            var pItem = cmd.Parameters.Add("@item", System.Data.DbType.String);
-            var pReq = cmd.Parameters.Add("@req", System.Data.DbType.String);
-            var pOther = cmd.Parameters.Add("@other", System.Data.DbType.String);
-            var pSrc = cmd.Parameters.Add("@src", System.Data.DbType.String);
+            var pGn   = cmd.Parameters.Add("@gn",   System.Data.DbType.String);
+            var pItem = cmd.Parameters.Add("@item",  System.Data.DbType.String);
+            var pReq  = cmd.Parameters.Add("@req",   System.Data.DbType.String);
+            var pOther= cmd.Parameters.Add("@other", System.Data.DbType.String);
+            var pSrc  = cmd.Parameters.Add("@src",   System.Data.DbType.String);
+            var pNSrc = cmd.Parameters.Add("@nsrc",  System.Data.DbType.String);
+
+            string srcFile = records.Count > 0 ? records[0].SourceFile : string.Empty;
+            pSrc.Value  = srcFile;
+            pNSrc.Value = NormalizeSourceFile(srcFile);
 
             foreach (var r in records)
             {
                 string itemName = r.GetField("ItemName");
                 if (string.IsNullOrWhiteSpace(itemName)) continue;
 
-                pGn.Value = normalized;
+                pGn.Value   = normalized;
                 pItem.Value = itemName.Trim();
-                pReq.Value = (object)r.GetField("RequiredValue") ?? DBNull.Value;
+                pReq.Value  = (object)r.GetField("RequiredValue") ?? DBNull.Value;
 
-                // 保存其他字段为 JSON
                 var otherFields = new Dictionary<string, string>();
                 foreach (var kv in r.Fields)
                 {
@@ -76,7 +192,6 @@ namespace DocExtractor.Data.Repositories
                 pOther.Value = otherFields.Count > 0
                     ? (object)JsonConvert.SerializeObject(otherFields)
                     : DBNull.Value;
-                pSrc.Value = (object)r.SourceFile ?? DBNull.Value;
 
                 cmd.ExecuteNonQuery();
             }
@@ -134,6 +249,15 @@ namespace DocExtractor.Data.Repositories
             using var cmd = _conn.CreateCommand();
             cmd.CommandText = "DELETE FROM GroupItemKnowledge";
             cmd.ExecuteNonQuery();
+        }
+
+        /// <summary>
+        /// 归一化来源文件路径（转小写、统一斜杠），用于文件去重索引
+        /// </summary>
+        public static string NormalizeSourceFile(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+            return path.Trim().ToLowerInvariant().Replace('\\', '/');
         }
 
         /// <summary>归一化组名：去除首尾空白、序号前缀等</summary>

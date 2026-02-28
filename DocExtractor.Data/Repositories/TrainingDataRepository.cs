@@ -37,12 +37,11 @@ namespace DocExtractor.Data.Repositories
 
         public TrainingDataRepository(string dbPath)
         {
-            bool isNew = !File.Exists(dbPath);
             _conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
             _conn.Open();
-
-            if (isNew)
-                InitializeSchema();
+            // 始终执行建表（全部用 CREATE TABLE IF NOT EXISTS，幂等安全）
+            // 数据库文件由 ExtractionConfigRepository 先创建，此处补齐训练相关表
+            InitializeSchema();
         }
 
         private void InitializeSchema()
@@ -257,6 +256,149 @@ CREATE TABLE IF NOT EXISTS ModelTrainingHistory (
     ParametersJson TEXT
 );", _conn);
             cmd.ExecuteNonQuery();
+        }
+
+        // ── 从知识库自动生成训练数据 ─────────────────────────────────────────
+
+        /// <summary>
+        /// 从 GroupItemKnowledge 和 BuiltInConfigs 自动生成训练样本，无需手工导入。
+        ///
+        /// 生成规则：
+        ///   列名分类器：BuiltInConfigs 所有配置的 KnownColumnVariants → ColumnTrainingData
+        ///   章节标题分类器：
+        ///     正样本 — GroupItemKnowledge 中的唯一组名 → IsHeading=true
+        ///     负样本 — GroupItemKnowledge 中的唯一细则项名 → IsHeading=false
+        ///
+        /// 已存在的完全相同文本不重复插入（基于 ColumnText/ParagraphText 唯一约束跳过）。
+        /// </summary>
+        /// <returns>(columnSamplesAdded, sectionPositiveAdded, sectionNegativeAdded)</returns>
+        public (int colAdded, int secPosAdded, int secNegAdded) GenerateFromKnowledge(
+            DocExtractor.Core.Models.ExtractionConfig[] configs)
+        {
+            int colAdded = 0, secPosAdded = 0, secNegAdded = 0;
+
+            // ── 1. 列名分类器：从 BuiltInConfigs.KnownColumnVariants 生成 ──────
+            // 查询已有文本（避免重复）
+            var existingColTexts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var cmd = new SQLiteCommand("SELECT ColumnText FROM ColumnTrainingData", _conn))
+            using (var reader = cmd.ExecuteReader())
+                while (reader.Read())
+                    existingColTexts.Add(reader.GetString(0));
+
+            using (var tx = _conn.BeginTransaction())
+            {
+                using var insertCol = new SQLiteCommand(
+                    "INSERT INTO ColumnTrainingData (ColumnText, FieldName, Source) VALUES (@t, @f, 'KnowledgeBase')",
+                    _conn, tx);
+                var pColText = insertCol.Parameters.Add("@t", System.Data.DbType.String);
+                var pColField = insertCol.Parameters.Add("@f", System.Data.DbType.String);
+
+                foreach (var config in configs)
+                {
+                    foreach (var field in config.Fields)
+                    {
+                        // DisplayName 本身也是合法的列名变体
+                        var variants = new List<string>(field.KnownColumnVariants);
+                        if (!string.IsNullOrWhiteSpace(field.DisplayName))
+                            variants.Add(field.DisplayName);
+
+                        foreach (var variant in variants)
+                        {
+                            if (string.IsNullOrWhiteSpace(variant)) continue;
+                            string v = variant.Trim();
+                            if (existingColTexts.Contains(v)) continue;
+
+                            pColText.Value = v;
+                            pColField.Value = field.FieldName;
+                            insertCol.ExecuteNonQuery();
+                            existingColTexts.Add(v);
+                            colAdded++;
+                        }
+                    }
+                }
+                tx.Commit();
+            }
+
+            // ── 2. 章节标题分类器：从 GroupItemKnowledge 生成正/负样本 ──────────
+            // 读取已有段落文本（避免重复）
+            EnsureSectionTable();
+            var existingSecTexts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var cmd = new SQLiteCommand("SELECT ParagraphText FROM SectionTrainingData", _conn))
+            using (var reader = cmd.ExecuteReader())
+                while (reader.Read())
+                    existingSecTexts.Add(reader.GetString(0));
+
+            // 读取知识库中的唯一组名（正样本）和唯一细则项名（负样本）
+            var groupNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var itemNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            bool hasKnowledgeTable = TableExists("GroupItemKnowledge");
+            if (hasKnowledgeTable)
+            {
+                using (var cmd = new SQLiteCommand(
+                    "SELECT DISTINCT GroupNameNormalized FROM GroupItemKnowledge WHERE GroupNameNormalized != ''",
+                    _conn))
+                using (var reader = cmd.ExecuteReader())
+                    while (reader.Read()) groupNames.Add(reader.GetString(0));
+
+                using (var cmd = new SQLiteCommand(
+                    "SELECT DISTINCT ItemName FROM GroupItemKnowledge WHERE ItemName != ''",
+                    _conn))
+                using (var reader = cmd.ExecuteReader())
+                    while (reader.Read()) itemNames.Add(reader.GetString(0));
+            }
+
+            using (var tx = _conn.BeginTransaction())
+            {
+                using var insertSec = new SQLiteCommand(@"
+INSERT INTO SectionTrainingData (ParagraphText, IsHeading, IsBold, FontSize, HasHeadingStyle, OutlineLevel, Source)
+VALUES (@t, @h, @b, 0, 0, 9, 'KnowledgeBase')", _conn, tx);
+                var pSecText = insertSec.Parameters.Add("@t", System.Data.DbType.String);
+                var pSecHeading = insertSec.Parameters.Add("@h", System.Data.DbType.Int32);
+                var pSecBold = insertSec.Parameters.Add("@b", System.Data.DbType.Int32);
+
+                // 正样本：知识库中的组名
+                foreach (var gn in groupNames)
+                {
+                    if (string.IsNullOrWhiteSpace(gn) || gn.Length > 80) continue;
+                    if (existingSecTexts.Contains(gn)) continue;
+
+                    pSecText.Value = gn;
+                    pSecHeading.Value = 1;
+                    // 组名通常不加粗（在知识库里已归一化，无格式信息）
+                    pSecBold.Value = 0;
+                    insertSec.ExecuteNonQuery();
+                    existingSecTexts.Add(gn);
+                    secPosAdded++;
+                }
+
+                // 负样本：知识库中的细则项名（排除与组名重复的）
+                foreach (var item in itemNames)
+                {
+                    if (string.IsNullOrWhiteSpace(item) || item.Length > 80) continue;
+                    if (existingSecTexts.Contains(item)) continue;
+                    if (groupNames.Contains(item)) continue;  // 避免互相矛盾
+
+                    pSecText.Value = item;
+                    pSecHeading.Value = 0;
+                    pSecBold.Value = 0;
+                    insertSec.ExecuteNonQuery();
+                    existingSecTexts.Add(item);
+                    secNegAdded++;
+                }
+
+                tx.Commit();
+            }
+
+            return (colAdded, secPosAdded, secNegAdded);
+        }
+
+        private bool TableExists(string tableName)
+        {
+            using var cmd = new SQLiteCommand(
+                $"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{tableName}'",
+                _conn);
+            return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
         }
 
         public void Dispose() => _conn.Dispose();
