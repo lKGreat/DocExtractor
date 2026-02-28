@@ -242,6 +242,32 @@ namespace DocExtractor.UI.Forms
 
             // ── Tab 2：字段配置 ─────────────────────────────────────────────
             _configTab = new TabPage { Text = "  字段配置  ", Padding = new Padding(8) };
+
+            // 顶部信息栏：配置类型标签 + 导入/导出按钮
+            var configTopPanel = new Panel { Dock = DockStyle.Top, Height = 48, Padding = new Padding(4) };
+            var configTopFlow = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false
+            };
+            _configTypeLabel = new Label
+            {
+                Text = "内置配置",
+                Font = new Font("微软雅黑", 9, FontStyle.Bold),
+                ForeColor = Color.White,
+                BackColor = Color.FromArgb(22, 119, 255),
+                TextAlign = ContentAlignment.MiddleCenter,
+                AutoSize = false,
+                Size = new Size(80, 28),
+                Margin = new Padding(0, 6, 12, 0)
+            };
+            _importConfigBtn = new AntdUI.Button { Text = "从 Excel 导入", Size = new Size(120, 32) };
+            _exportConfigBtn = new AntdUI.Button { Text = "导出为 Excel", Size = new Size(110, 32) };
+            configTopFlow.Controls.AddRange(new Control[] { _configTypeLabel, _importConfigBtn, _exportConfigBtn });
+            configTopPanel.Controls.Add(configTopFlow);
+
+            // 中：字段定义 Grid + 全局设置（SplitContainer）
             var configSplit = new SplitContainer
             {
                 Dock = DockStyle.Fill,
@@ -249,7 +275,6 @@ namespace DocExtractor.UI.Forms
                 SplitterDistance = 400
             };
 
-            // 上：字段定义 Grid
             _fieldsGrid = new DataGridView
             {
                 Dock = DockStyle.Fill,
@@ -268,8 +293,9 @@ namespace DocExtractor.UI.Forms
                     DataSource = System.Enum.GetNames(typeof(DocExtractor.Core.Models.FieldDataType)),
                     FillWeight = 12
                 },
-                new DataGridViewCheckBoxColumn { Name = "IsRequired", HeaderText = "必填", FillWeight = 8 },
-                new DataGridViewTextBoxColumn { Name = "Variants", HeaderText = "列名变体（逗号分隔）", FillWeight = 50 }
+                new DataGridViewCheckBoxColumn { Name = "IsRequired", HeaderText = "必填", FillWeight = 6 },
+                new DataGridViewTextBoxColumn { Name = "DefaultValue", HeaderText = "默认值", FillWeight = 12 },
+                new DataGridViewTextBoxColumn { Name = "Variants", HeaderText = "列名变体（逗号分隔）", FillWeight = 40 }
             });
 
             // 下：全局设置
@@ -292,6 +318,7 @@ namespace DocExtractor.UI.Forms
             settingsPanel.Controls.Add(new Label { Text = "列名匹配：", TextAlign = ContentAlignment.MiddleRight, Width = 80 }, 2, 0);
             settingsPanel.Controls.Add(_columnMatchCombo, 3, 0);
 
+            // 底部操作按钮
             var configBtnPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 42 };
             _saveConfigBtn = new AntdUI.Button { Text = "保存配置", Type = AntdUI.TTypeMini.Primary, Size = new Size(100, 34) };
             _setDefaultBtn = new AntdUI.Button { Text = "设为默认", Size = new Size(100, 34) };
@@ -301,7 +328,9 @@ namespace DocExtractor.UI.Forms
 
             configSplit.Panel1.Controls.Add(_fieldsGrid);
             configSplit.Panel2.Controls.Add(settingsPanel);
+            // Dock 顺序: Bottom → Top → Fill
             _configTab.Controls.Add(configSplit);
+            _configTab.Controls.Add(configTopPanel);
             _configTab.Controls.Add(configBtnPanel);
 
             // ── Tab 3：拆分规则 ─────────────────────────────────────────────
@@ -430,12 +459,9 @@ namespace DocExtractor.UI.Forms
 
             // ── 操作按钮 ──
             var trainBtnFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(0, 6, 0, 0) };
-            _trainColumnBtn = new AntdUI.Button { Text = "训练列名分类器", Type = AntdUI.TTypeMini.Primary, Size = new Size(150, 36) };
-            _trainNerBtn = new AntdUI.Button { Text = "训练 NER 模型", Type = AntdUI.TTypeMini.Primary, Size = new Size(140, 36) };
-            _trainSectionBtn = new AntdUI.Button { Text = "训练章节标题分类器", Type = AntdUI.TTypeMini.Primary, Size = new Size(170, 36) };
-            _trainUnifiedBtn = new AntdUI.Button { Text = "训练统一模型", Type = AntdUI.TTypeMini.Primary, Size = new Size(150, 36), Font = new Font("微软雅黑", 9, FontStyle.Bold) };
+            _trainUnifiedBtn = new AntdUI.Button { Text = "开始训练", Type = AntdUI.TTypeMini.Primary, Size = new Size(150, 36), Font = new Font("微软雅黑", 9, FontStyle.Bold) };
             _cancelTrainBtn = new AntdUI.Button { Text = "取消训练", Type = AntdUI.TTypeMini.Error, Size = new Size(100, 36), Enabled = false };
-            trainBtnFlow.Controls.AddRange(new Control[] { _trainUnifiedBtn, _trainColumnBtn, _trainNerBtn, _trainSectionBtn, _cancelTrainBtn });
+            trainBtnFlow.Controls.AddRange(new Control[] { _trainUnifiedBtn, _cancelTrainBtn });
 
             // ── 结果对比 ──
             _evalLabel = new Label
@@ -540,6 +566,9 @@ namespace DocExtractor.UI.Forms
         private Label _recommendHintLabel;
 
         // Tab 2：字段配置
+        private Label _configTypeLabel;
+        private AntdUI.Button _importConfigBtn;
+        private AntdUI.Button _exportConfigBtn;
         private DataGridView _fieldsGrid;
         private NumericUpDown _headerRowsSpinner;
         private ComboBox _columnMatchCombo;
@@ -557,9 +586,6 @@ namespace DocExtractor.UI.Forms
         private Label _nerSampleCountLabel;
         private Label _sectionSampleCountLabel;
         private Label _knowledgeCountLabel;
-        private AntdUI.Button _trainColumnBtn;
-        private AntdUI.Button _trainNerBtn;
-        private AntdUI.Button _trainSectionBtn;
         private AntdUI.Button _cancelTrainBtn;
         private AntdUI.Button _genFromKnowledgeBtn;
         private AntdUI.Button _importCsvBtn;

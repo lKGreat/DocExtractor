@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
+using DocExtractor.Core.Models;
 using OfficeOpenXml;
 using OfficeOpenXml.Style;
 using System.Drawing;
@@ -116,6 +118,155 @@ namespace DocExtractor.Data.Export
         }
 
         /// <summary>
+        /// 生成空白字段配置模板（含下拉验证和使用说明）
+        /// </summary>
+        public static void GenerateConfigTemplate(string outputPath)
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using var package = new ExcelPackage();
+
+            // Sheet 1：字段配置
+            var sheet = package.Workbook.Worksheets.Add("字段配置");
+            SetHeader(sheet, 1, 1, "字段名（英文）");
+            SetHeader(sheet, 1, 2, "显示名（中文）");
+            SetHeader(sheet, 1, 3, "数据类型");
+            SetHeader(sheet, 1, 4, "必填");
+            SetHeader(sheet, 1, 5, "默认值");
+            SetHeader(sheet, 1, 6, "列名变体（分号分隔）");
+
+            // 数据类型下拉验证
+            var dtValidation = sheet.DataValidations.AddListValidation("C2:C200");
+            foreach (var name in Enum.GetNames(typeof(FieldDataType)))
+                dtValidation.Formula.Values.Add(name);
+            dtValidation.ShowErrorMessage = true;
+            dtValidation.ErrorTitle = "无效的数据类型";
+            dtValidation.Error = "请从下拉列表中选择数据类型";
+
+            // 必填下拉验证
+            var reqValidation = sheet.DataValidations.AddListValidation("D2:D200");
+            reqValidation.Formula.Values.Add("是");
+            reqValidation.Formula.Values.Add("否");
+
+            // 添加空行底线引导
+            for (int i = 2; i <= 21; i++)
+            {
+                sheet.Cells[i, 1].Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
+                sheet.Cells[i, 1].Style.Border.Bottom.Color.SetColor(Color.LightGray);
+                sheet.Cells[i, 2].Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
+                sheet.Cells[i, 2].Style.Border.Bottom.Color.SetColor(Color.LightGray);
+            }
+
+            sheet.Column(1).AutoFit(15, 30);
+            sheet.Column(2).AutoFit(15, 30);
+            sheet.Column(3).Width = 15;
+            sheet.Column(4).Width = 8;
+            sheet.Column(5).Width = 15;
+            sheet.Column(6).AutoFit(20, 60);
+            sheet.View.FreezePanes(2, 1);
+
+            // Sheet 2：配置信息
+            var metaSheet = package.Workbook.Worksheets.Add("配置信息");
+            metaSheet.Cells[1, 1].Value = "配置名称";
+            metaSheet.Cells[1, 1].Style.Font.Bold = true;
+            metaSheet.Cells[1, 2].Value = "";
+            metaSheet.Cells[2, 1].Value = "表头行数";
+            metaSheet.Cells[2, 1].Style.Font.Bold = true;
+            metaSheet.Cells[2, 2].Value = 1;
+            metaSheet.Cells[3, 1].Value = "列名匹配模式";
+            metaSheet.Cells[3, 1].Style.Font.Bold = true;
+            metaSheet.Cells[3, 2].Value = "HybridMlFirst";
+            var matchValidation = metaSheet.DataValidations.AddListValidation("B3");
+            foreach (var name in Enum.GetNames(typeof(ColumnMatchMode)))
+                matchValidation.Formula.Values.Add(name);
+            metaSheet.Column(1).Width = 20;
+            metaSheet.Column(2).Width = 30;
+
+            // Sheet 3：使用说明
+            var helpSheet = package.Workbook.Worksheets.Add("使用说明");
+            helpSheet.Cells[1, 1].Value = "字段配置模板 — 使用说明";
+            helpSheet.Cells[1, 1].Style.Font.Bold = true;
+            helpSheet.Cells[1, 1].Style.Font.Size = 14;
+            helpSheet.Cells[3, 1].Value = "1. 在「字段配置」Sheet 中填写需要抽取的字段定义";
+            helpSheet.Cells[4, 1].Value = "2.「字段名」为英文标识符（如 TelemetryCode），「显示名」为中文名称（如 遥测代号）";
+            helpSheet.Cells[5, 1].Value = "3.「数据类型」从下拉菜单选择：Text, Integer, Decimal, HexCode, Enumeration, Formula, Unit, Boolean";
+            helpSheet.Cells[6, 1].Value = "4.「列名变体」填写文档中可能出现的列标题变体，用分号隔开，如：遥测代号;参数代号;代号";
+            helpSheet.Cells[7, 1].Value = "5. 在「配置信息」Sheet 中填写配置名称（必填）和全局参数";
+            helpSheet.Cells[8, 1].Value = "6. 填写完成后，在程序「字段配置」页面点击「从 Excel 导入」按钮导入";
+            helpSheet.Column(1).Width = 90;
+
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+            package.SaveAs(new FileInfo(outputPath));
+        }
+
+        /// <summary>
+        /// 将当前配置导出为 Excel 模板文件（带数据）
+        /// </summary>
+        public static void GenerateConfigTemplateWithData(string outputPath, ExtractionConfig config)
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using var package = new ExcelPackage();
+
+            // Sheet 1：字段配置（带数据）
+            var sheet = package.Workbook.Worksheets.Add("字段配置");
+            SetHeader(sheet, 1, 1, "字段名（英文）");
+            SetHeader(sheet, 1, 2, "显示名（中文）");
+            SetHeader(sheet, 1, 3, "数据类型");
+            SetHeader(sheet, 1, 4, "必填");
+            SetHeader(sheet, 1, 5, "默认值");
+            SetHeader(sheet, 1, 6, "列名变体（分号分隔）");
+
+            int row = 2;
+            foreach (var f in config.Fields)
+            {
+                sheet.Cells[row, 1].Value = f.FieldName;
+                sheet.Cells[row, 2].Value = f.DisplayName;
+                sheet.Cells[row, 3].Value = f.DataType.ToString();
+                sheet.Cells[row, 4].Value = f.IsRequired ? "是" : "否";
+                sheet.Cells[row, 5].Value = f.DefaultValue ?? "";
+                sheet.Cells[row, 6].Value = string.Join(";", f.KnownColumnVariants);
+                row++;
+            }
+
+            // 数据类型下拉验证（覆盖数据行 + 预留空行）
+            var dtValidation = sheet.DataValidations.AddListValidation($"C2:C{row + 20}");
+            dtValidation.ShowErrorMessage = true;
+            dtValidation.ErrorTitle = "无效的数据类型";
+            dtValidation.Error = "请从下拉列表中选择数据类型";
+            foreach (var name in Enum.GetNames(typeof(FieldDataType)))
+                dtValidation.Formula.Values.Add(name);
+
+            // 必填下拉验证
+            var reqValidation = sheet.DataValidations.AddListValidation($"D2:D{row + 20}");
+            reqValidation.Formula.Values.Add("是");
+            reqValidation.Formula.Values.Add("否");
+
+            sheet.Column(1).AutoFit(15, 30);
+            sheet.Column(2).AutoFit(15, 30);
+            sheet.Column(3).Width = 15;
+            sheet.Column(4).Width = 8;
+            sheet.Column(5).Width = 15;
+            sheet.Column(6).AutoFit(20, 60);
+            sheet.View.FreezePanes(2, 1);
+
+            // Sheet 2：配置信息
+            var metaSheet = package.Workbook.Worksheets.Add("配置信息");
+            metaSheet.Cells[1, 1].Value = "配置名称";
+            metaSheet.Cells[1, 1].Style.Font.Bold = true;
+            metaSheet.Cells[1, 2].Value = config.ConfigName;
+            metaSheet.Cells[2, 1].Value = "表头行数";
+            metaSheet.Cells[2, 1].Style.Font.Bold = true;
+            metaSheet.Cells[2, 2].Value = config.HeaderRowCount;
+            metaSheet.Cells[3, 1].Value = "列名匹配模式";
+            metaSheet.Cells[3, 1].Style.Font.Bold = true;
+            metaSheet.Cells[3, 2].Value = config.ColumnMatch.ToString();
+            metaSheet.Column(1).Width = 20;
+            metaSheet.Column(2).Width = 30;
+
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+            package.SaveAs(new FileInfo(outputPath));
+        }
+
+        /// <summary>
         /// 确保模板目录存在，若模板文件不存在则生成
         /// </summary>
         public static void EnsureTemplates(string templateDir)
@@ -129,6 +280,10 @@ namespace DocExtractor.Data.Export
             string nerTemplatePath = Path.Combine(templateDir, "NER标注模板.xlsx");
             if (!File.Exists(nerTemplatePath))
                 GenerateNerTrainingTemplate(nerTemplatePath);
+
+            string configTemplatePath = Path.Combine(templateDir, "字段配置模板.xlsx");
+            if (!File.Exists(configTemplatePath))
+                GenerateConfigTemplate(configTemplatePath);
         }
 
         // ── 内部数据 ──────────────────────────────────────────────────────

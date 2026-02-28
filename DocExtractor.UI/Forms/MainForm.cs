@@ -130,15 +130,14 @@ namespace DocExtractor.UI.Forms
             _setDefaultBtn.Click += OnSetDefault;
             _newConfigBtn.Click += OnNewConfig;
             _deleteConfigBtn.Click += OnDeleteConfig;
+            _importConfigBtn.Click += OnImportConfig;
+            _exportConfigBtn.Click += OnExportConfig;
 
             // Tab 3：拆分规则
             _saveSplitBtn.Click += OnSaveSplitRules;
 
             // Tab 4：模型训练
             _trainUnifiedBtn.Click += OnTrainUnified;
-            _trainColumnBtn.Click += OnTrainColumnClassifier;
-            _trainNerBtn.Click += OnTrainNer;
-            _trainSectionBtn.Click += OnTrainSectionClassifier;
             _genFromKnowledgeBtn.Click += OnGenerateFromKnowledge;
             _importCsvBtn.Click += OnImportTrainingData;
             _importSectionWordBtn.Click += OnImportSectionFromWord;
@@ -353,6 +352,88 @@ namespace DocExtractor.UI.Forms
             }
         }
 
+        private void OnImportConfig(object sender, EventArgs e)
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Filter = "Excel 文件|*.xlsx",
+                Title = "选择字段配置 Excel 文件"
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+
+            try
+            {
+                var config = ConfigImporter.ImportFromExcel(dlg.FileName);
+
+                // 内置配置名不允许覆盖
+                if (BuiltInConfigs.BuiltInNames.Contains(config.ConfigName))
+                {
+                    MessageHelper.Warn(this,
+                        $"配置名「{config.ConfigName}」与内置配置冲突，请修改 Excel 中的配置名称后重试");
+                    return;
+                }
+
+                // 同名配置确认覆盖
+                var existing = _configItems.Find(c => c.Name == config.ConfigName);
+                if (existing.Id > 0)
+                {
+                    var result = MessageBox.Show(
+                        $"配置「{config.ConfigName}」已存在，是否覆盖？",
+                        "确认覆盖", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    if (result != DialogResult.Yes) return;
+                }
+
+                int id = _configRepo.Save(config);
+                LoadConfigList(id);
+                MessageHelper.Success(this, $"配置「{config.ConfigName}」导入成功（{config.Fields.Count} 个字段）");
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"导入失败：{ex.Message}");
+            }
+        }
+
+        private void OnExportConfig(object sender, EventArgs e)
+        {
+            if (_currentConfig == null || _currentConfig.Fields.Count == 0)
+            {
+                MessageHelper.Warn(this, "当前配置无字段可导出");
+                return;
+            }
+
+            SaveFieldsFromGrid();
+            SaveGlobalSettings();
+
+            using var dlg = new SaveFileDialog
+            {
+                Filter = "Excel 文件|*.xlsx",
+                FileName = $"{_currentConfig.ConfigName}.xlsx"
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+
+            try
+            {
+                TemplateGenerator.GenerateConfigTemplateWithData(dlg.FileName, _currentConfig);
+                MessageHelper.Success(this, "配置已导出");
+            }
+            catch (Exception ex)
+            {
+                MessageHelper.Error(this, $"导出失败：{ex.Message}");
+            }
+        }
+
+        private void UpdateConfigTypeBadge()
+        {
+            if (_currentConfig == null) return;
+            bool isBuiltIn = BuiltInConfigs.BuiltInNames.Contains(_currentConfig.ConfigName);
+            _configTypeLabel.Text = isBuiltIn ? "内置配置" : "自定义配置";
+            _configTypeLabel.BackColor = isBuiltIn
+                ? Color.FromArgb(22, 119, 255)
+                : Color.FromArgb(82, 196, 26);
+            _configTypeLabel.Width = isBuiltIn ? 80 : 90;
+            _deleteConfigBtn.Enabled = !isBuiltIn;
+        }
+
         private void SaveFieldsFromGrid()
         {
             _currentConfig.Fields.Clear();
@@ -366,7 +447,8 @@ namespace DocExtractor.UI.Forms
                 {
                     FieldName = fieldName!,
                     DisplayName = row.Cells["DisplayName"].Value?.ToString() ?? fieldName!,
-                    IsRequired = row.Cells["IsRequired"].Value is true
+                    IsRequired = row.Cells["IsRequired"].Value is true,
+                    DefaultValue = row.Cells["DefaultValue"].Value?.ToString()
                 };
 
                 if (Enum.TryParse<FieldDataType>(row.Cells["DataType"].Value?.ToString(), out var dt))
@@ -490,9 +572,6 @@ namespace DocExtractor.UI.Forms
         private void SetTrainingUIState(bool training)
         {
             _trainUnifiedBtn.Enabled = !training;
-            _trainColumnBtn.Enabled = !training;
-            _trainNerBtn.Enabled = !training;
-            _trainSectionBtn.Enabled = !training;
             _cancelTrainBtn.Enabled = training;
             _presetCombo.Enabled = !training;
             _trainProgressBar.Style = training ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;
@@ -527,130 +606,6 @@ namespace DocExtractor.UI.Forms
 
         // ── Tab 4：模型训练事件 ───────────────────────────────────────────────
 
-        private async void OnTrainColumnClassifier(object sender, EventArgs e)
-        {
-            SetTrainingUIState(true);
-            _trainLogBox.Clear();
-
-            try
-            {
-                List<(string ColumnText, string FieldName)> samples;
-                using (var repo = new TrainingDataRepository(_dbPath))
-                    samples = repo.GetColumnSamples();
-
-                if (samples.Count < 10)
-                {
-                    MessageHelper.Warn(this,
-                        $"列名分类样本不足（当前 {samples.Count} 条，至少需要 10 条），请先导入训练数据");
-                    return;
-                }
-
-                var inputs = samples.ConvertAll(s => new ColumnInput
-                {
-                    ColumnText = s.ColumnText,
-                    Label = s.FieldName
-                });
-
-                var parameters = BuildTrainingParameters();
-                _trainCts = new CancellationTokenSource();
-                var ct = _trainCts.Token;
-
-                ShowTrainingComparison("ColumnClassifier", "", samples.Count);
-
-                var progress = new Progress<string>(msg => AppendTrainLog(msg));
-                var trainer = new ColumnClassifierTrainer();
-                string modelPath = Path.Combine(_modelsDir, "column_classifier.zip");
-
-                var eval = await Task.Run(() => trainer.Train(inputs, modelPath, progress, parameters, ct));
-
-                _columnModel.Reload(modelPath);
-                _evalLabel.Text = $"列名分类器：{eval}";
-                AppendTrainLog($"\n训练完成！{eval}");
-
-                // 保存训练历史
-                using (var repo = new TrainingDataRepository(_dbPath))
-                    repo.SaveTrainingRecord("ColumnClassifier", samples.Count, eval.ToString(),
-                        JsonConvert.SerializeObject(parameters));
-
-                MessageHelper.Success(this, "列名分类器训练完成");
-            }
-            catch (OperationCanceledException)
-            {
-                AppendTrainLog("\n训练已取消");
-                MessageHelper.Warn(this, "训练已取消");
-            }
-            catch (Exception ex)
-            {
-                AppendTrainLog($"\n训练失败: {ex.Message}");
-                MessageHelper.Error(this, $"训练失败：{ex.Message}");
-            }
-            finally
-            {
-                _trainCts?.Dispose();
-                _trainCts = null;
-                SetTrainingUIState(false);
-                RefreshTrainingStats();
-            }
-        }
-
-        private async void OnTrainNer(object sender, EventArgs e)
-        {
-            SetTrainingUIState(true);
-
-            try
-            {
-                List<NerAnnotation> samples;
-                using (var repo = new TrainingDataRepository(_dbPath))
-                    samples = repo.GetNerSamples();
-
-                if (samples.Count < 20)
-                {
-                    MessageHelper.Warn(this,
-                        $"NER 样本不足（当前 {samples.Count} 条，至少需要 20 条）");
-                    return;
-                }
-
-                var parameters = BuildTrainingParameters();
-                _trainCts = new CancellationTokenSource();
-                var ct = _trainCts.Token;
-
-                ShowTrainingComparison("NER", "", samples.Count);
-
-                var progress = new Progress<string>(msg => AppendTrainLog(msg));
-                var trainer = new NerTrainer();
-                string modelPath = Path.Combine(_modelsDir, "ner_model.zip");
-
-                var eval = await Task.Run(() => trainer.Train(samples, modelPath, progress, parameters, ct));
-                _nerModel.Load(modelPath);
-
-                _evalLabel.Text = $"NER 模型：{eval}";
-                AppendTrainLog($"\nNER 训练完成！{eval}");
-
-                using (var repo = new TrainingDataRepository(_dbPath))
-                    repo.SaveTrainingRecord("NER", samples.Count, eval.ToString(),
-                        JsonConvert.SerializeObject(parameters));
-
-                MessageHelper.Success(this, "NER 模型训练完成");
-            }
-            catch (OperationCanceledException)
-            {
-                AppendTrainLog("\nNER 训练已取消");
-                MessageHelper.Warn(this, "训练已取消");
-            }
-            catch (Exception ex)
-            {
-                AppendTrainLog($"\nNER 训练失败: {ex.Message}");
-                MessageHelper.Error(this, $"NER 训练失败：{ex.Message}");
-            }
-            finally
-            {
-                _trainCts?.Dispose();
-                _trainCts = null;
-                SetTrainingUIState(false);
-                RefreshTrainingStats();
-            }
-        }
-
         private void OnImportTrainingData(object sender, EventArgs e)
         {
             using var dlg = new OpenFileDialog
@@ -682,78 +637,6 @@ namespace DocExtractor.UI.Forms
             catch (Exception ex)
             {
                 MessageHelper.Error(this, $"导入失败：{ex.Message}");
-            }
-        }
-
-        private async void OnTrainSectionClassifier(object sender, EventArgs e)
-        {
-            SetTrainingUIState(true);
-            AppendTrainLog("开始训练章节标题分类器...");
-
-            try
-            {
-                List<DocExtractor.Data.Repositories.SectionAnnotation> samples;
-                using (var repo = new TrainingDataRepository(_dbPath))
-                    samples = repo.GetSectionSamples();
-
-                if (samples.Count < 20)
-                {
-                    MessageHelper.Warn(this,
-                        $"章节标题样本不足（当前 {samples.Count} 条，至少需要 20 条）。\n" +
-                        "请先通过「从 Word 导入章节标注」按钮导入标注数据。");
-                    return;
-                }
-
-                var inputs = samples.ConvertAll(s => new SectionInput
-                {
-                    Text = s.ParagraphText,
-                    IsBold = s.IsBold ? 1f : 0f,
-                    FontSize = s.FontSize,
-                    HasNumberPrefix = s.ParagraphText.Length > 0 && char.IsDigit(s.ParagraphText[0]) ? 1f : 0f,
-                    TextLength = s.ParagraphText.Length,
-                    HasHeadingStyle = s.HasHeadingStyle ? 1f : 0f,
-                    Position = 0f,
-                    IsHeading = s.IsHeading
-                });
-
-                var parameters = BuildTrainingParameters();
-                _trainCts = new CancellationTokenSource();
-                var ct = _trainCts.Token;
-
-                ShowTrainingComparison("SectionClassifier", "", samples.Count);
-
-                var progress = new Progress<string>(msg => AppendTrainLog(msg));
-                var trainer = new SectionClassifierTrainer();
-                string modelPath = Path.Combine(_modelsDir, "section_classifier.zip");
-
-                var eval = await Task.Run(() => trainer.Train(inputs, modelPath, progress, parameters, ct));
-
-                _sectionModel.Reload(modelPath);
-                _evalLabel.Text = $"章节标题分类器：{eval}";
-                AppendTrainLog($"\n章节标题分类器训练完成！\n{eval}");
-
-                using (var repo = new TrainingDataRepository(_dbPath))
-                    repo.SaveTrainingRecord("SectionClassifier", samples.Count, eval.ToString(),
-                        JsonConvert.SerializeObject(parameters));
-
-                MessageHelper.Success(this, "章节标题分类器训练完成！");
-            }
-            catch (OperationCanceledException)
-            {
-                AppendTrainLog("\n章节标题训练已取消");
-                MessageHelper.Warn(this, "训练已取消");
-            }
-            catch (Exception ex)
-            {
-                AppendTrainLog($"\n训练失败: {ex.Message}");
-                MessageHelper.Error(this, $"训练失败：{ex.Message}");
-            }
-            finally
-            {
-                _trainCts?.Dispose();
-                _trainCts = null;
-                SetTrainingUIState(false);
-                RefreshTrainingStats();
             }
         }
 
@@ -1317,6 +1200,7 @@ namespace DocExtractor.UI.Forms
             {
                 _currentConfig = config;
                 LoadConfigToGrids();
+                UpdateConfigTypeBadge();
             }
         }
 
@@ -1331,6 +1215,7 @@ namespace DocExtractor.UI.Forms
                     f.DisplayName,
                     f.DataType.ToString(),
                     f.IsRequired,
+                    f.DefaultValue ?? string.Empty,
                     string.Join(",", f.KnownColumnVariants));
             }
 

@@ -72,12 +72,28 @@ All four `IRecordSplitter` implementations live in `DocExtractor.Core/Splitting/
 
 `SplitRule.Priority` controls execution order (lower = first). Rules are chained — the output of one splitter feeds the next.
 
+## ML Models
+
+Three models live under `{AppPath}/models/`:
+
+| Model | File | Backend | Min samples |
+|-------|------|---------|-------------|
+| Column classifier | `column_classifier.zip` | TorchSharp NAS-BERT (`TextClassification`) | 10 |
+| NER | `ner_model.zip` | TorchSharp NAS-BERT (`NamedEntityRecognition`) | 20 |
+| Section classifier | `section_classifier.zip` | ML.NET FastTree binary classifier | 20 |
+
+**`UnifiedDocModel`** — container that holds all three model instances and exposes `LoadAll(modelsDir)` to silently skip missing files.
+
+**`UnifiedModelTrainer.TrainAll()`** — three-stage sequential trainer (Column → NER → Section) with unified `IProgress<(string stage, string detail, int pct)>` and `CancellationToken`.
+
+**`TrainingParameters`** has three factory presets: `Fast()` (2 epochs, 50 trees), `Standard()` (4 epochs, 200 trees, 5-fold CV), `Fine()` (8 epochs, 500 trees, augmentation). Pass to `UnifiedModelTrainer.TrainAll()`.
+
 ## Training Workflow
 
 1. Column annotation CSV (format: `raw column name,canonical field name`) → import via UI → stored in `ColumnTrainingData` SQLite table.
-2. `ColumnClassifierTrainer.Train()` requires ≥ 10 samples; uses 80/20 split; saves model to `models/column_classifier.zip`.
-3. `ColumnClassifierModel.Reload()` hot-loads the new model without restarting the app.
-4. NER training follows the same pattern via `NerTrainer` / `NerTrainingData` table; requires ≥ 20 annotated text samples.
+2. NER samples stored in `NerTrainingData`; section heading samples in `SectionTrainingData` (lazy-created via `EnsureSectionTable()` — not in `schema.sql`).
+3. Trigger via UI → calls `UnifiedModelTrainer.TrainAll()` → saves all three `.zip` files.
+4. `UnifiedDocModel.LoadAll()` hot-reloads all models without restarting the app.
 
 ## UI Development
 
@@ -151,6 +167,12 @@ Rules:
 ### EPPlus License
 
 All `ExcelPackage` usage must set `ExcelPackage.LicenseContext = LicenseContext.NonCommercial;` before opening any file. This is already done in `ExcelDocumentParser` and `ExcelExporter` constructors — do not remove it.
+
+## Recommendation Engine
+
+`GroupItemRecommender` (in `DocExtractor.ML.Recommendation`) recommends child items for a group name using **character bigram Jaccard similarity** (threshold = 0.25) against all known group names in `GroupKnowledgeRepository`.
+
+`GroupKnowledgeRepository` manages the `GroupItemKnowledge` SQLite table (auto-created via `EnsureTable()` with an `ALTER TABLE` guard for the `SourceFileNormalized` column — this table is **not** in `schema.sql`).
 
 ## Built-in Telemetry Config
 
