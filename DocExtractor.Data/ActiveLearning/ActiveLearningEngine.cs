@@ -22,8 +22,8 @@ namespace DocExtractor.Data.ActiveLearning
         private readonly QualityEvaluator _evaluator;
         private readonly UncertaintySampler _sampler;
 
-        /// <summary>最小训练样本阈值</summary>
-        public int MinSamplesForTraining { get; set; } = 5;
+        /// <summary>最小训练样本阈值（每个唯一文本算 1 条）</summary>
+        public int MinSamplesForTraining { get; set; } = 3;
 
         /// <summary>每次新增多少条样本后建议训练</summary>
         public int TrainTriggerBatchSize { get; set; } = 20;

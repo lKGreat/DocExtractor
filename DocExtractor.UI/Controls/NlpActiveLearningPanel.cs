@@ -147,19 +147,26 @@ namespace DocExtractor.UI.Controls
             var tabVerified = new TabPage("已标注样本");
 
             // --- 不确定性队列 tab ---
-            var queueToolBar = new Panel { Dock = DockStyle.Top, Height = 30, Padding = new Padding(0, 2, 0, 0) };
+            var queueToolBar = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 30,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(0, 3, 0, 0)
+            };
             _refreshQueueBtn = NlpLabTheme.MakeDefault(new Button
             {
                 Text   = "刷新",
                 Width  = 60,
-                Height = 24,
-                Dock   = DockStyle.Right
+                Height = 24
             });
             _refreshQueueBtn.Click += (s, e) => LoadQueue();
             var queueHint = new Label
             {
                 Text      = "模型最不确定的文本（需先导入文本）",
-                Dock      = DockStyle.Fill,
+                Width     = 300,
+                Height    = 24,
                 Font      = NlpLabTheme.Small,
                 ForeColor = NlpLabTheme.TextTertiary,
                 TextAlign = ContentAlignment.MiddleLeft
@@ -177,34 +184,40 @@ namespace DocExtractor.UI.Controls
             tabQueue.Controls.Add(queueToolBar);
 
             // --- 已标注样本 tab ---
-            var verifiedToolBar = new Panel { Dock = DockStyle.Top, Height = 30, Padding = new Padding(0, 2, 0, 0) };
-            _deleteVerifiedBtn = NlpLabTheme.MakeDanger(new Button
+            var verifiedToolBar = new FlowLayoutPanel
             {
-                Text    = "删除",
-                Width   = 60,
-                Height  = 24,
-                Dock    = DockStyle.Right,
-                Enabled = false
-            });
-            _deleteVerifiedBtn.Click += OnDeleteVerified;
+                Dock = DockStyle.Top,
+                Height = 30,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(0, 3, 0, 0)
+            };
             var verifiedRefreshBtn = NlpLabTheme.MakeDefault(new Button
             {
                 Text   = "刷新",
                 Width  = 60,
-                Height = 24,
-                Dock   = DockStyle.Right
+                Height = 24
             });
             verifiedRefreshBtn.Click += (s, e) => LoadVerifiedSamples();
+            _deleteVerifiedBtn = NlpLabTheme.MakeDanger(new Button
+            {
+                Text    = "删除所选",
+                Width   = 75,
+                Height  = 24,
+                Enabled = false
+            });
+            _deleteVerifiedBtn.Click += OnDeleteVerified;
             var verifiedHint = new Label
             {
                 Text      = "点击行可重新编辑标注",
-                Dock      = DockStyle.Fill,
+                Width     = 200,
+                Height    = 24,
                 Font      = NlpLabTheme.Small,
                 ForeColor = NlpLabTheme.TextTertiary,
                 TextAlign = ContentAlignment.MiddleLeft
             };
-            verifiedToolBar.Controls.Add(_deleteVerifiedBtn);
             verifiedToolBar.Controls.Add(verifiedRefreshBtn);
+            verifiedToolBar.Controls.Add(_deleteVerifiedBtn);
             verifiedToolBar.Controls.Add(verifiedHint);
 
             _verifiedGrid = new DataGridView { Dock = DockStyle.Fill };
@@ -505,11 +518,14 @@ namespace DocExtractor.UI.Controls
         {
             int verified = _engine.GetVerifiedCount(_scenario.Id);
             int pending  = _engine.GetPendingUncertainCount(_scenario.Id);
-            _statsLabel.Text = $"已标注 {verified} 条 | 待审核 {pending} 条 | 最小训练量 {_engine.MinSamplesForTraining} 条";
+            string trainStatus = verified >= _engine.MinSamplesForTraining
+                ? "✓ 可以训练"
+                : $"还差 {_engine.MinSamplesForTraining - verified} 条（需 {_engine.MinSamplesForTraining} 条不同文本）";
+            _statsLabel.Text = $"已标注 {verified} 条 | 待审核 {pending} 条 | {trainStatus}";
 
             _trainBtn.Enabled = verified >= _engine.MinSamplesForTraining;
             if (!_trainBtn.Enabled)
-                _trainStatusLabel.Text = $"还需标注 {_engine.MinSamplesForTraining - verified} 条才能训练";
+                _trainStatusLabel.Text = $"还需 {_engine.MinSamplesForTraining - verified} 条不同文本才能训练（每条唯一文本计 1 条，重复提交不累计）";
 
             System.Threading.Tasks.Task.Run(() =>
             {
