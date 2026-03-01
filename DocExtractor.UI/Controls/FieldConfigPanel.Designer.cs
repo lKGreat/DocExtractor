@@ -60,11 +60,26 @@ namespace DocExtractor.UI.Controls
 
             this._importConfigBtn.Text = "从 Excel 导入";
             this._importConfigBtn.Size = new Size(120, 32);
+            this._importConfigBtn.Margin = new Padding(0, 0, 4, 0);
 
             this._exportConfigBtn.Text = "导出为 Excel";
             this._exportConfigBtn.Size = new Size(110, 32);
+            this._exportConfigBtn.Margin = new Padding(0, 0, 4, 0);
 
-            this._topFlow.Controls.AddRange(new Control[] { this._configTypeLabel, this._importConfigBtn, this._exportConfigBtn });
+            this._importJsonBtn = new AntdUI.Button();
+            this._importJsonBtn.Text = "从 JSON 导入";
+            this._importJsonBtn.Size = new Size(115, 32);
+            this._importJsonBtn.Margin = new Padding(0, 0, 4, 0);
+
+            this._exportJsonBtn = new AntdUI.Button();
+            this._exportJsonBtn.Text = "导出为 JSON";
+            this._exportJsonBtn.Size = new Size(110, 32);
+
+            this._topFlow.Controls.AddRange(new Control[] {
+                this._configTypeLabel,
+                this._importConfigBtn, this._exportConfigBtn,
+                this._importJsonBtn, this._exportJsonBtn
+            });
             this._topBar.Controls.Add(this._topFlow);
 
             // ── Config Splitter (top: fields grid | bottom: global settings) ──
@@ -209,6 +224,8 @@ namespace DocExtractor.UI.Controls
         private Label _configTypeLabel;
         private AntdUI.Button _importConfigBtn;
         private AntdUI.Button _exportConfigBtn;
+        private AntdUI.Button _importJsonBtn;
+        private AntdUI.Button _exportJsonBtn;
         private SplitContainer _configSplit;
         private DataGridView _fieldsGrid;
         private TableLayoutPanel _settingsPanel;

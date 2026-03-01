@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using DocExtractor.Core.Models;
 
 namespace DocExtractor.Core.Interfaces
@@ -17,11 +18,12 @@ namespace DocExtractor.Core.Interfaces
             ExtractionConfig config,
             IProgress<PipelineProgress>? progress = null);
 
-        /// <summary>批量处理多个文件</summary>
+        /// <summary>批量处理多个文件，支持增量进度报告和取消</summary>
         IReadOnlyList<ExtractionResult> ExecuteBatch(
             IReadOnlyList<string> filePaths,
             ExtractionConfig config,
-            IProgress<PipelineProgress>? progress = null);
+            IProgress<PipelineProgress>? progress = null,
+            CancellationToken cancellation = default);
     }
 
     public class ExtractionResult
@@ -43,8 +45,14 @@ namespace DocExtractor.Core.Interfaces
 
     public class PipelineProgress
     {
-        public string Stage { get; set; } = string.Empty;   // "解析", "列名识别", "抽取", "拆分"
+        public string Stage { get; set; } = string.Empty;   // "解析", "列名识别", "抽取", "拆分", "增量结果"
         public string Message { get; set; } = string.Empty;
         public int Percent { get; set; }
+
+        /// <summary>
+        /// 每完成一个文件时携带的增量抽取结果。
+        /// 非 null 时 UI 应立即追加行到结果表格，而不仅仅更新进度条。
+        /// </summary>
+        public ExtractionResult? IncrementalResult { get; set; }
     }
 }

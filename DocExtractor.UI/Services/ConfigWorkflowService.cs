@@ -26,5 +26,8 @@ namespace DocExtractor.UI.Services
         public int GetDefaultConfigId() => _repository.GetDefaultConfigId();
 
         public void SetDefaultConfigId(int id) => _repository.SetDefaultConfigId(id);
+
+        /// <summary>将所有配置导出为 JSON 种子文件</summary>
+        public void ExportSeedFile(string path) => _repository.ExportAllConfigsToSeedFile(path);
     }
 }

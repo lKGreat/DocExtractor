@@ -4,6 +4,7 @@
     <AssemblyName>DocExtractor.Data</AssemblyName>
     <RootNamespace>DocExtractor.Data</RootNamespace>
     <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);CS8600;CS8601;CS8602;CS8603;CS8604;CS8618;CS8625</NoWarn>
     <LangVersion>9.0</LangVersion>
   </PropertyGroup>
 

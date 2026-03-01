@@ -160,27 +160,94 @@ namespace DocExtractor.Data.Repositories
 
         /// <summary>
         /// 确保内置配置存在并与代码定义保持同步。
-        /// 对已存在的内置配置执行强制覆盖更新（保证新增字段如 GroupName 能生效）。
+        /// 优先从 {AppPath}/configs/builtin_configs.json 加载；文件不存在时回退到代码定义。
         /// </summary>
         public void SeedBuiltInConfigs()
         {
-            foreach (var config in BuiltInConfigs.GetAll())
+            var configs = TryLoadBuiltInConfigsFromFile() ?? BuiltInConfigs.GetAll();
+            foreach (var config in configs)
+                SeedSingleConfig(config);
+
+            // 若 JSON 种子文件尚不存在，自动从内置定义生成，便于后续数据驱动维护
+            EnsureBuiltInSeedFileExists();
+        }
+
+        private void EnsureBuiltInSeedFileExists()
+        {
+            try
             {
-                PreserveUserSettings(config);
+                string configsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "configs");
+                string seedFile = Path.Combine(configsDir, "builtin_configs.json");
+                if (File.Exists(seedFile)) return;
 
-                string json = JsonConvert.SerializeObject(config, Formatting.None);
+                var builtInNames = new HashSet<string>(BuiltInConfigs.BuiltInNames);
+                var all = GetAll();
+                var builtInList = new List<ExtractionConfig>();
+                foreach (var item in all)
+                {
+                    if (builtInNames.Contains(item.Name))
+                    {
+                        var cfg = GetById(item.Id);
+                        if (cfg != null) builtInList.Add(cfg);
+                    }
+                }
+                if (builtInList.Count == 0) return;
 
-                using var cmd = new SQLiteCommand(
-                    @"INSERT INTO ExtractionConfig (ConfigName, ConfigJson)
-                      VALUES (@name, @json)
-                      ON CONFLICT(ConfigName) DO UPDATE
-                        SET ConfigJson = excluded.ConfigJson,
-                            UpdatedAt  = datetime('now')",
-                    _conn);
-                cmd.Parameters.AddWithValue("@name", config.ConfigName);
-                cmd.Parameters.AddWithValue("@json", json);
-                cmd.ExecuteNonQuery();
+                Directory.CreateDirectory(configsDir);
+                File.WriteAllText(seedFile, JsonConvert.SerializeObject(builtInList, Formatting.Indented));
             }
+            catch { /* 种子文件写入失败不影响主流程 */ }
+        }
+
+        /// <summary>尝试从 configs/builtin_configs.json 加载内置配置（返回 null 表示文件不存在）</summary>
+        private List<ExtractionConfig>? TryLoadBuiltInConfigsFromFile()
+        {
+            try
+            {
+                string configsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "configs");
+                string seedFile = Path.Combine(configsDir, "builtin_configs.json");
+                if (!File.Exists(seedFile)) return null;
+
+                string json = File.ReadAllText(seedFile);
+                var configs = JsonConvert.DeserializeObject<List<ExtractionConfig>>(json);
+                return configs?.Count > 0 ? configs : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void SeedSingleConfig(ExtractionConfig config)
+        {
+            PreserveUserSettings(config);
+            string json = JsonConvert.SerializeObject(config, Formatting.None);
+            using var cmd = new SQLiteCommand(
+                @"INSERT INTO ExtractionConfig (ConfigName, ConfigJson)
+                  VALUES (@name, @json)
+                  ON CONFLICT(ConfigName) DO UPDATE
+                    SET ConfigJson = excluded.ConfigJson,
+                        UpdatedAt  = datetime('now')",
+                _conn);
+            cmd.Parameters.AddWithValue("@name", config.ConfigName);
+            cmd.Parameters.AddWithValue("@json", json);
+            cmd.ExecuteNonQuery();
+        }
+
+        /// <summary>将当前内置配置（含所有用户自定义配置）导出为 JSON 种子文件</summary>
+        public void ExportAllConfigsToSeedFile(string outputPath)
+        {
+            var all = GetAll();
+            var configs = new List<ExtractionConfig>();
+            foreach (var item in all)
+            {
+                var cfg = GetById(item.Id);
+                if (cfg != null) configs.Add(cfg);
+            }
+            string json = JsonConvert.SerializeObject(configs, Formatting.Indented);
+            string dir = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            File.WriteAllText(outputPath, json);
         }
 
         /// <summary>

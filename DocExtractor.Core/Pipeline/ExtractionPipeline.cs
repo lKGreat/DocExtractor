@@ -237,15 +237,29 @@ namespace DocExtractor.Core.Pipeline
         public IReadOnlyList<ExtractionResult> ExecuteBatch(
             IReadOnlyList<string> filePaths,
             ExtractionConfig config,
-            IProgress<PipelineProgress>? progress = null)
+            IProgress<PipelineProgress>? progress = null,
+            System.Threading.CancellationToken cancellation = default)
         {
             var results = new List<ExtractionResult>();
             for (int i = 0; i < filePaths.Count; i++)
             {
+                cancellation.ThrowIfCancellationRequested();
+
                 var fp = filePaths[i];
                 int basePct = (int)(100.0 * i / filePaths.Count);
                 Report(progress, "批处理", $"处理文件 {i + 1}/{filePaths.Count}: {Path.GetFileName(fp)}", basePct);
-                results.Add(Execute(fp, config, progress));
+
+                var result = Execute(fp, config, progress);
+                results.Add(result);
+
+                // 每完成一个文件，Report 增量结果供 UI 实时追加行
+                progress?.Report(new PipelineProgress
+                {
+                    Stage = "增量结果",
+                    Message = $"文件 {i + 1}/{filePaths.Count} 完成：{Path.GetFileName(fp)} ({result.RecordsComplete} 条完整)",
+                    Percent = (int)(100.0 * (i + 1) / filePaths.Count),
+                    IncrementalResult = result
+                });
             }
             return results;
         }

@@ -47,6 +47,9 @@ namespace DocExtractor.Core.Models
 
         /// <summary>跨表关联键值域重叠阈值</summary>
         public double CrossTableOverlapThreshold { get; set; } = 0.6;
+
+        /// <summary>导出输出配置（字段映射 + Sheet 规则）。null 时使用默认导出行为。</summary>
+        public OutputConfig? OutputConfig { get; set; }
     }
 
     public enum TableSelectionMode

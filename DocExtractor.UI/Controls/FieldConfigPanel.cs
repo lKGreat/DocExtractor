@@ -45,6 +45,8 @@ namespace DocExtractor.UI.Controls
             _deleteConfigBtn.Click += OnDeleteConfig;
             _importConfigBtn.Click += OnImportConfig;
             _exportConfigBtn.Click += OnExportConfig;
+            _importJsonBtn.Click += OnImportJson;
+            _exportJsonBtn.Click += OnExportJson;
             _fieldsGrid.CellContentClick += OnFieldsGridCellClick;
             _valueCleaningCheckBox.CheckedChanged += OnValueCleaningToggled;
             _cleaningRulesBtn.Click += OnOpenCleaningRules;
@@ -280,6 +282,68 @@ namespace DocExtractor.UI.Controls
                 MessageHelper.Success(this, "配置已导出");
             }
             catch (Exception ex) { MessageHelper.Error(this, $"导出失败：{ex.Message}"); }
+        }
+
+        // ── JSON Import / Export ──────────────────────────────────────────────
+
+        private void OnImportJson(object sender, EventArgs e)
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Filter = "JSON 配置方案|*.json",
+                Title = "选择配置方案 JSON 文件"
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+
+            try
+            {
+                string json = System.IO.File.ReadAllText(dlg.FileName);
+                var config = Newtonsoft.Json.JsonConvert.DeserializeObject<ExtractionConfig>(json);
+                if (config == null || string.IsNullOrWhiteSpace(config.ConfigName))
+                {
+                    MessageHelper.Warn(this, "JSON 文件内容无效或缺少配置名称");
+                    return;
+                }
+
+                if (BuiltInConfigs.BuiltInNames.Contains(config.ConfigName))
+                {
+                    MessageHelper.Warn(this, $"配置名「{config.ConfigName}」与内置配置冲突，请修改后重试");
+                    return;
+                }
+
+                if (!ConfirmOverwriteIfExists(config.ConfigName)) return;
+
+                int id = _ctx.ConfigService.Save(config);
+                MessageHelper.Success(this, $"配置「{config.ConfigName}」导入成功（{config.Fields.Count} 个字段）");
+                ConfigListChanged?.Invoke(id);
+            }
+            catch (Exception ex) { MessageHelper.Error(this, $"JSON 导入失败：{ex.Message}"); }
+        }
+
+        private void OnExportJson(object sender, EventArgs e)
+        {
+            if (_ctx.CurrentConfig == null || _ctx.CurrentConfig.Fields.Count == 0)
+            {
+                MessageHelper.Warn(this, "当前配置无字段可导出");
+                return;
+            }
+
+            ReadGridIntoCurrentConfig();
+
+            using var dlg = new SaveFileDialog
+            {
+                Filter = "JSON 配置方案|*.json",
+                FileName = $"{_ctx.CurrentConfig.ConfigName}.json"
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+
+            try
+            {
+                string json = Newtonsoft.Json.JsonConvert.SerializeObject(_ctx.CurrentConfig, Newtonsoft.Json.Formatting.Indented);
+                System.IO.File.WriteAllText(dlg.FileName, json);
+                MessageHelper.Success(this, "配置方案已导出为 JSON");
+            }
+            catch (Exception ex) { MessageHelper.Error(this, $"JSON 导出失败：{ex.Message}"); }
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────
