@@ -170,7 +170,7 @@ namespace DocExtractor.ML.EntityExtractor
             try
             {
                 var chars = text.ToCharArray();
-                string spaceSeparated = string.Join(" ", chars.Select(c => c.ToString()));
+                string spaceSeparated = NerTextTokenizer.ToSpaceSeparatedCharTokens(text);
 
                 NerWordOutputWithScore output;
                 lock (_lock)
@@ -215,7 +215,7 @@ namespace DocExtractor.ML.EntityExtractor
             if (_wordEngineWithScore == null) return ExtractWithWordLevel(text);
 
             var chars = text.ToCharArray();
-            string spaceSeparated = string.Join(" ", chars.Select(c => c.ToString()));
+            string spaceSeparated = NerTextTokenizer.ToSpaceSeparatedCharTokens(text);
 
             NerWordOutputWithScore output;
             lock (_lock)
@@ -237,7 +237,7 @@ namespace DocExtractor.ML.EntityExtractor
             if (_wordEngineWithScore == null) return ExtractLabelEntitiesWithWordLevel(text);
 
             var chars = text.ToCharArray();
-            string spaceSeparated = string.Join(" ", chars.Select(c => c.ToString()));
+            string spaceSeparated = NerTextTokenizer.ToSpaceSeparatedCharTokens(text);
 
             NerWordOutputWithScore output;
             lock (_lock)
@@ -257,8 +257,8 @@ namespace DocExtractor.ML.EntityExtractor
         private IReadOnlyList<NamedEntity> ExtractWithWordLevel(string text)
         {
             var chars = text.ToCharArray();
-            // 每个字符用空格分隔，与训练时格式一致
-            string spaceSeparated = string.Join(" ", chars.Select(c => c.ToString()));
+            // 每个原始字符映射为一个 token，与训练时格式一致
+            string spaceSeparated = NerTextTokenizer.ToSpaceSeparatedCharTokens(text);
 
             NerWordOutput output;
             lock (_lock)
@@ -338,7 +338,7 @@ namespace DocExtractor.ML.EntityExtractor
         private IReadOnlyList<LabelEntity> ExtractLabelEntitiesWithWordLevel(string text)
         {
             var chars = text.ToCharArray();
-            string spaceSeparated = string.Join(" ", chars.Select(c => c.ToString()));
+            string spaceSeparated = NerTextTokenizer.ToSpaceSeparatedCharTokens(text);
 
             NerWordOutput output;
             lock (_lock)

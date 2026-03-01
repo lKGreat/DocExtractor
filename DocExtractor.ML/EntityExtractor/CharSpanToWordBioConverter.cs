@@ -30,8 +30,9 @@ namespace DocExtractor.ML.EntityExtractor
                 }
             }
 
-            // 每个字符用空格分隔，形成 "母 线 电 压 : 2 8 V" 格式
-            var sentence = string.Join(" ", chars.Select(c => c.ToString()));
+            // 每个原始字符映射为一个 token，并对空白字符做占位映射，
+            // 避免分词分隔符（空格）与文本中的真实空白字符冲突。
+            var sentence = NerTextTokenizer.ToSpaceSeparatedCharTokens(annotation.Text);
 
             return new NerWordSample
             {

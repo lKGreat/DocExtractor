@@ -45,6 +45,20 @@ namespace DocExtractor.ML.EntityExtractor
             var wordSamples = CharSpanToWordBioConverter.ConvertAll(annotatedSamples);
             progress?.Report($"句级样本: {wordSamples.Count} 条");
 
+            // 过滤掉无法用于序列标注训练的空样本，避免底层 trainer 索引越界
+            int beforeCount = wordSamples.Count;
+            wordSamples = wordSamples
+                .Where(s => s.Label != null && s.Label.Length > 0 && !string.IsNullOrWhiteSpace(s.Sentence))
+                .ToList();
+            int dropped = beforeCount - wordSamples.Count;
+            if (dropped > 0)
+                progress?.Report($"已跳过空白样本: {dropped} 条");
+
+            if (wordSamples.Count < 2)
+                throw new InvalidOperationException($"有效 NER 句级样本不足（{wordSamples.Count} 条），请检查是否存在空文本标注。");
+
+            ValidateWordSamples(wordSamples);
+
             cancellation.ThrowIfCancellationRequested();
 
             var dataView = _mlContext.Data.LoadFromEnumerable(wordSamples);
@@ -70,8 +84,7 @@ namespace DocExtractor.ML.EntityExtractor
                     outputColumnName: "PredictedLabel",
                     sentence1ColumnName: "Sentence",
                     batchSize: p.NerBatchSize,
-                    maxEpochs: p.NerEpochs,
-                    validationSet: keyedValidation)
+                    maxEpochs: p.NerEpochs)
                 .Append(_mlContext.Transforms.Conversion.MapKeyToValue(
                     outputColumnName: "PredictedLabel",
                     inputColumnName: "PredictedLabel"));
@@ -105,7 +118,7 @@ namespace DocExtractor.ML.EntityExtractor
                 MicroAccuracy = metrics.MicroAccuracy,
                 MacroAccuracy = metrics.MacroAccuracy,
                 CharSampleCount = wordSamples.Sum(s => s.Label.Length),
-                TextSampleCount = annotatedSamples.Count,
+                TextSampleCount = wordSamples.Count,
                 LabelTypes = allLabels,
                 CrossValidationStdDev = 0,
                 CrossValidationFolds = 0
@@ -145,6 +158,27 @@ namespace DocExtractor.ML.EntityExtractor
                 ? perLabel.Values.Average(v => v.Total > 0 ? (double)v.Correct / v.Total : 0)
                 : 0;
             return (micro, macro);
+        }
+
+        private static void ValidateWordSamples(IReadOnlyList<NerWordSample> samples)
+        {
+            for (int i = 0; i < samples.Count; i++)
+            {
+                var s = samples[i];
+                if (s.Label == null || s.Label.Length == 0)
+                    throw new InvalidOperationException($"第 {i + 1} 条样本标签为空。");
+
+                int tokenCount = s.Sentence?
+                    .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Length ?? 0;
+                if (tokenCount != s.Label.Length)
+                {
+                    string preview = s.Sentence ?? string.Empty;
+                    if (preview.Length > 80) preview = preview.Substring(0, 80) + "...";
+                    throw new InvalidOperationException(
+                        $"第 {i + 1} 条样本 token/label 长度不一致（token={tokenCount}, label={s.Label.Length}）。Sentence={preview}");
+                }
+            }
         }
     }
 
