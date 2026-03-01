@@ -93,7 +93,7 @@ namespace DocExtractor.Core.Protocol
                 ParseByteLength(lengthStr, field);
                 ParseFieldName(name, field);
 
-                if (string.IsNullOrEmpty(field.ByteSequence) && field.BitLength > 0)
+                if (string.IsNullOrEmpty(field.ByteSequence) && !string.IsNullOrEmpty(lastByteSeq))
                     field.ByteSequence = lastByteSeq;
 
                 ExtractUnit(remarks, name, field);
@@ -101,10 +101,42 @@ namespace DocExtractor.Core.Protocol
                 ExtractDataType(remarks, field);
                 ClassifySpecialFields(byteSeq, name, field);
 
-                fields.Add(field);
+                if (string.IsNullOrEmpty(field.FieldName) && field.BitLength == 0
+                    && fields.Count > 0)
+                {
+                    MergeIntoPrevious(fields, field);
+                }
+                else
+                {
+                    fields.Add(field);
+                }
             }
 
             return fields;
+        }
+
+        private static void MergeIntoPrevious(List<ProtocolTelemetryField> fields, ProtocolTelemetryField cont)
+        {
+            var prev = fields[fields.Count - 1];
+            string contNum = ExtractByteNum(cont.ByteSequence);
+            if (!string.IsNullOrEmpty(contNum))
+            {
+                string prevPrefix = prev.ByteSequence.StartsWith("W") ? "W" : "";
+                if (!string.IsNullOrEmpty(prevPrefix))
+                    prev.ByteSequence = prevPrefix + ExtractByteNum(prev.ByteSequence)
+                                        + "-" + prevPrefix + contNum;
+            }
+            if (!string.IsNullOrEmpty(cont.Remarks) && string.IsNullOrEmpty(prev.Remarks))
+                prev.Remarks = cont.Remarks;
+            if (!string.IsNullOrEmpty(cont.Unit) && string.IsNullOrEmpty(prev.Unit))
+                prev.Unit = cont.Unit;
+        }
+
+        private static string ExtractByteNum(string byteSeq)
+        {
+            if (string.IsNullOrEmpty(byteSeq)) return "";
+            var m = Regex.Match(byteSeq, @"(\d+)$");
+            return m.Success ? m.Groups[1].Value : "";
         }
 
         private int DetectHeaderRows(RawTable table)
@@ -184,7 +216,7 @@ namespace DocExtractor.Core.Protocol
                 field.BitOffset = lowBit;
                 field.BitLength = highBit - lowBit + 1;
                 string desc = bitMatch.Groups[3].Value.Trim();
-                field.FieldName = $"b{highBit}-b{lowBit}{desc}";
+                field.FieldName = $"b{highBit}-b{lowBit}:{desc}";
                 return;
             }
 
@@ -195,7 +227,7 @@ namespace DocExtractor.Core.Protocol
                 field.BitOffset = bit;
                 field.BitLength = 1;
                 string desc = singleBitMatch.Groups[2].Value.Trim();
-                field.FieldName = $"b{bit}{desc}";
+                field.FieldName = $"b{bit}:{desc}";
                 return;
             }
 
@@ -214,7 +246,7 @@ namespace DocExtractor.Core.Protocol
                         int lowBit = int.Parse(nums[1].Value);
                         field.BitOffset = lowBit;
                         field.BitLength = highBit - lowBit + 1;
-                        field.FieldName = $"b{highBit}-b{lowBit}{desc}";
+                        field.FieldName = $"b{highBit}-b{lowBit}:{desc}";
                     }
                     else
                     {

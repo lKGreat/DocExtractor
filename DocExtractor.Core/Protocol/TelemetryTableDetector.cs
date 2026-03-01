@@ -101,6 +101,8 @@ namespace DocExtractor.Core.Protocol
 
                     string channelLabel = table.GetValue(r, lastCol).Trim();
                     if (string.IsNullOrEmpty(channelLabel)) continue;
+                    int slashIdx = channelLabel.IndexOf('/');
+                    if (slashIdx > 0) channelLabel = channelLabel.Substring(0, slashIdx);
 
                     string frameId = BuildFrameId(table, r);
                     if (!string.IsNullOrEmpty(frameId))

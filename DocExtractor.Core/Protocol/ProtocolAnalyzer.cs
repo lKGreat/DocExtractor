@@ -65,10 +65,8 @@ namespace DocExtractor.Core.Protocol
             result.AsyncChannels = _detector.ExtractChannelInfo(
                 tables, detection.CanIdSummaryTableIndices, TelemetryType.Async);
 
-            if (result.SyncChannels.Count == 0)
-                GenerateDefaultChannels(result.SyncChannels);
-            if (result.AsyncChannels.Count == 0)
-                GenerateDefaultChannels(result.AsyncChannels);
+            EnsureBothChannels(result.SyncChannels);
+            EnsureBothChannels(result.AsyncChannels);
 
             if (result.SyncTables.Count == 0 && result.AsyncTables.Count == 0)
                 result.Warnings.Add("未检测到遥测定义表格，请检查文档格式是否符合协议规范");
@@ -135,20 +133,38 @@ namespace DocExtractor.Core.Protocol
             return "大端";
         }
 
-        private void GenerateDefaultChannels(List<ChannelInfo> channels)
+        private void EnsureBothChannels(List<ChannelInfo> channels)
         {
-            channels.Add(new ChannelInfo
+            if (channels.Count == 0)
             {
-                ChannelLabel = "A通道",
-                FrameIdHex = "",
-                FrameCount = 0
-            });
-            channels.Add(new ChannelInfo
+                channels.Add(new ChannelInfo { ChannelLabel = "A通道", FrameIdHex = "", FrameCount = 0 });
+                channels.Add(new ChannelInfo { ChannelLabel = "B通道", FrameIdHex = "", FrameCount = 0 });
+                return;
+            }
+
+            bool hasA = channels.Exists(c => c.ChannelLabel.Contains("A"));
+            bool hasB = channels.Exists(c => c.ChannelLabel.Contains("B"));
+
+            if (hasA && !hasB)
             {
-                ChannelLabel = "B通道",
-                FrameIdHex = "",
-                FrameCount = 0
-            });
+                var src = channels.Find(c => c.ChannelLabel.Contains("A"));
+                channels.Add(new ChannelInfo
+                {
+                    ChannelLabel = "B通道",
+                    FrameIdHex = src.FrameIdHex,
+                    FrameCount = src.FrameCount
+                });
+            }
+            else if (hasB && !hasA)
+            {
+                var src = channels.Find(c => c.ChannelLabel.Contains("B"));
+                channels.Insert(0, new ChannelInfo
+                {
+                    ChannelLabel = "A通道",
+                    FrameIdHex = src.FrameIdHex,
+                    FrameCount = src.FrameCount
+                });
+            }
         }
     }
 }
