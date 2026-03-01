@@ -88,6 +88,7 @@ namespace DocExtractor.Data.Export
                 }
             }
 
+            WriteEnumEntriesSheet(package, result);
             WriteApidQueueSheet(package, allChannels, result.SystemName);
             WriteFormulaSheet(package);
 
@@ -260,6 +261,63 @@ namespace DocExtractor.Data.Export
             sheet.Cells[1, 1].Style.WrapText = true;
             for (int c = 2; c <= col; c++)
                 sheet.Column(c).Width = 18;
+        }
+
+        private void WriteEnumEntriesSheet(ExcelPackage package, ProtocolParseResult result)
+        {
+            var entries = new List<ProtocolEnumEntry>();
+            foreach (var table in result.SyncTables)
+            {
+                foreach (var field in table.Fields)
+                {
+                    if (field.EnumEntries != null && field.EnumEntries.Count > 0)
+                        entries.AddRange(field.EnumEntries);
+                }
+            }
+            foreach (var table in result.AsyncTables)
+            {
+                foreach (var field in table.Fields)
+                {
+                    if (field.EnumEntries != null && field.EnumEntries.Count > 0)
+                        entries.AddRange(field.EnumEntries);
+                }
+            }
+
+            if (entries.Count == 0)
+                return;
+
+            var sheet = package.Workbook.Worksheets.Add("枚举值明细");
+            string[] headers = { "序号", "字段名", "位偏移", "位长度", "值", "语义说明" };
+            for (int c = 0; c < headers.Length; c++)
+                SetHeaderCell(sheet, 1, c + 1, headers[c]);
+
+            int row = 2;
+            int seq = 1;
+            foreach (var entry in entries)
+            {
+                sheet.Cells[row, 1].Value = seq++;
+                sheet.Cells[row, 2].Value = entry.FieldName;
+                sheet.Cells[row, 3].Value = entry.BitOffset >= 0 ? entry.BitOffset.ToString() : "";
+                sheet.Cells[row, 4].Value = entry.BitLength > 0 ? entry.BitLength.ToString() : "";
+                sheet.Cells[row, 5].Value = entry.Value;
+                sheet.Cells[row, 6].Value = entry.Description;
+                row++;
+            }
+
+            for (int c = 1; c <= headers.Length; c++)
+            {
+                double maxWidth = GetDisplayWidth(headers[c - 1]);
+                for (int r = 2; r < row; r++)
+                {
+                    string val = sheet.Cells[r, c].Text ?? "";
+                    double w = GetDisplayWidth(val);
+                    if (w > maxWidth) maxWidth = w;
+                }
+                sheet.Column(c).Width = Math.Max(10, Math.Min(maxWidth + 2, 60));
+            }
+            sheet.View.FreezePanes(2, 1);
+            if (row > 2)
+                sheet.Cells[1, 1, 1, headers.Length].AutoFilter = true;
         }
 
         private void WriteFormulaSheet(ExcelPackage package)

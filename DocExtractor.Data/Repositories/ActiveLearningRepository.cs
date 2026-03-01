@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
+using DocExtractor.Data.ActiveLearning;
 using Newtonsoft.Json;
 
 namespace DocExtractor.Data.Repositories
@@ -13,6 +14,10 @@ namespace DocExtractor.Data.Repositories
         public string Description { get; set; } = string.Empty;
         /// <summary>JSON 序列化的实体类型标签列表，如 ["Value","Unit","HexCode"]</summary>
         public List<string> EntityTypes { get; set; } = new List<string>();
+        /// <summary>启用的标注模式（JSON: ["SpanEntity","KvSchema", ...]）</summary>
+        public List<AnnotationMode> EnabledModes { get; set; } = new List<AnnotationMode> { global::DocExtractor.Data.ActiveLearning.AnnotationMode.SpanEntity };
+        /// <summary>场景模板配置（JSON）</summary>
+        public string TemplateConfigJson { get; set; } = "{}";
         public string CreatedAt { get; set; } = string.Empty;
         public bool IsBuiltIn { get; set; }
     }
@@ -26,6 +31,10 @@ namespace DocExtractor.Data.Repositories
         /// <summary>JSON 序列化的 List&lt;ActiveEntityAnnotation&gt;</summary>
         public string AnnotationsJson { get; set; } = "[]";
         public string Source { get; set; } = string.Empty;
+        /// <summary>标注模式（SpanEntity/KvSchema/EnumBitfield/Relation/Sequence）</summary>
+        public string AnnotationMode { get; set; } = global::DocExtractor.Data.ActiveLearning.AnnotationMode.SpanEntity.ToString();
+        /// <summary>结构化标注内容（JSON）</summary>
+        public string StructuredAnnotationsJson { get; set; } = "{}";
         /// <summary>预测时的平均置信度（0~1）</summary>
         public float ConfidenceScore { get; set; }
         public bool IsVerified { get; set; }
@@ -115,6 +124,8 @@ CREATE TABLE IF NOT EXISTS NlpScenario (
     Name        TEXT    NOT NULL,
     Description TEXT    NOT NULL DEFAULT '',
     EntityTypesJson TEXT NOT NULL DEFAULT '[]',
+    AnnotationModesJson TEXT NOT NULL DEFAULT '[]',
+    TemplateConfigJson TEXT NOT NULL DEFAULT '{}',
     IsBuiltIn   INTEGER NOT NULL DEFAULT 0,
     CreatedAt   TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -125,6 +136,8 @@ CREATE TABLE IF NOT EXISTS NlpAnnotatedText (
     RawText         TEXT    NOT NULL,
     AnnotationsJson TEXT    NOT NULL DEFAULT '[]',
     Source          TEXT    NOT NULL DEFAULT '',
+    AnnotationMode  TEXT    NOT NULL DEFAULT 'SpanEntity',
+    StructuredAnnotationsJson TEXT NOT NULL DEFAULT '{}',
     ConfidenceScore REAL    NOT NULL DEFAULT 0,
     IsVerified      INTEGER NOT NULL DEFAULT 0,
     CreatedAt       TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
@@ -159,6 +172,10 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
             cmd.ExecuteNonQuery();
 
             // 兼容已存在数据库：补齐新增列
+            TryAddColumn("NlpScenario", "AnnotationModesJson", "TEXT NOT NULL DEFAULT '[]'");
+            TryAddColumn("NlpScenario", "TemplateConfigJson", "TEXT NOT NULL DEFAULT '{}'");
+            TryAddColumn("NlpAnnotatedText", "AnnotationMode", "TEXT NOT NULL DEFAULT 'SpanEntity'");
+            TryAddColumn("NlpAnnotatedText", "StructuredAnnotationsJson", "TEXT NOT NULL DEFAULT '{}'");
             TryAddColumn("NlpUncertainQueue", "IsSkipped", "INTEGER NOT NULL DEFAULT 0");
             TryAddColumn("NlpUncertainQueue", "SkipReason", "TEXT NOT NULL DEFAULT ''");
             TryAddColumn("NlpUncertainQueue", "ReviewedAt", "TEXT NULL");
@@ -169,12 +186,18 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
         public int AddScenario(NlpScenario scenario)
         {
             string entityTypesJson = JsonConvert.SerializeObject(scenario.EntityTypes);
+            string modesJson = AnnotationModeHelper.ToJson(scenario.EnabledModes);
+            string templateJson = string.IsNullOrWhiteSpace(scenario.TemplateConfigJson)
+                ? "{}"
+                : scenario.TemplateConfigJson;
             using var cmd = new SQLiteCommand(
-                "INSERT INTO NlpScenario (Name, Description, EntityTypesJson, IsBuiltIn) VALUES (@n,@d,@e,@b); SELECT last_insert_rowid();",
+                "INSERT INTO NlpScenario (Name, Description, EntityTypesJson, AnnotationModesJson, TemplateConfigJson, IsBuiltIn) VALUES (@n,@d,@e,@m,@t,@b); SELECT last_insert_rowid();",
                 _conn);
             cmd.Parameters.AddWithValue("@n", scenario.Name);
             cmd.Parameters.AddWithValue("@d", scenario.Description);
             cmd.Parameters.AddWithValue("@e", entityTypesJson);
+            cmd.Parameters.AddWithValue("@m", modesJson);
+            cmd.Parameters.AddWithValue("@t", templateJson);
             cmd.Parameters.AddWithValue("@b", scenario.IsBuiltIn ? 1 : 0);
             return (int)(long)cmd.ExecuteScalar()!;
         }
@@ -182,7 +205,7 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
         public List<NlpScenario> GetAllScenarios()
         {
             using var cmd = new SQLiteCommand(
-                "SELECT Id, Name, Description, EntityTypesJson, IsBuiltIn, CreatedAt FROM NlpScenario ORDER BY IsBuiltIn DESC, Id ASC",
+                "SELECT Id, Name, Description, EntityTypesJson, AnnotationModesJson, TemplateConfigJson, IsBuiltIn, CreatedAt FROM NlpScenario ORDER BY IsBuiltIn DESC, Id ASC",
                 _conn);
             using var r = cmd.ExecuteReader();
             var result = new List<NlpScenario>();
@@ -194,8 +217,10 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
                     Name = r.GetString(1),
                     Description = r.GetString(2),
                     EntityTypes = JsonConvert.DeserializeObject<List<string>>(r.GetString(3)) ?? new List<string>(),
-                    IsBuiltIn = r.GetInt32(4) == 1,
-                    CreatedAt = r.GetString(5)
+                    EnabledModes = AnnotationModeHelper.ParseModes(r.IsDBNull(4) ? null : r.GetString(4)),
+                    TemplateConfigJson = r.IsDBNull(5) ? "{}" : r.GetString(5),
+                    IsBuiltIn = r.GetInt32(6) == 1,
+                    CreatedAt = r.GetString(7)
                 };
                 result.Add(s);
             }
@@ -205,7 +230,7 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
         public NlpScenario? GetScenarioById(int id)
         {
             using var cmd = new SQLiteCommand(
-                "SELECT Id, Name, Description, EntityTypesJson, IsBuiltIn, CreatedAt FROM NlpScenario WHERE Id=@id",
+                "SELECT Id, Name, Description, EntityTypesJson, AnnotationModesJson, TemplateConfigJson, IsBuiltIn, CreatedAt FROM NlpScenario WHERE Id=@id",
                 _conn);
             cmd.Parameters.AddWithValue("@id", id);
             using var r = cmd.ExecuteReader();
@@ -216,8 +241,10 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
                 Name = r.GetString(1),
                 Description = r.GetString(2),
                 EntityTypes = JsonConvert.DeserializeObject<List<string>>(r.GetString(3)) ?? new List<string>(),
-                IsBuiltIn = r.GetInt32(4) == 1,
-                CreatedAt = r.GetString(5)
+                EnabledModes = AnnotationModeHelper.ParseModes(r.IsDBNull(4) ? null : r.GetString(4)),
+                TemplateConfigJson = r.IsDBNull(5) ? "{}" : r.GetString(5),
+                IsBuiltIn = r.GetInt32(6) == 1,
+                CreatedAt = r.GetString(7)
             };
         }
 
@@ -233,13 +260,15 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
         public int AddAnnotatedText(NlpAnnotatedText item)
         {
             using var cmd = new SQLiteCommand(
-                "INSERT INTO NlpAnnotatedText (ScenarioId, RawText, AnnotationsJson, Source, ConfidenceScore, IsVerified) " +
-                "VALUES (@s,@t,@a,@src,@c,@v); SELECT last_insert_rowid();",
+                "INSERT INTO NlpAnnotatedText (ScenarioId, RawText, AnnotationsJson, Source, AnnotationMode, StructuredAnnotationsJson, ConfidenceScore, IsVerified) " +
+                "VALUES (@s,@t,@a,@src,@mode,@structured,@c,@v); SELECT last_insert_rowid();",
                 _conn);
             cmd.Parameters.AddWithValue("@s", item.ScenarioId);
             cmd.Parameters.AddWithValue("@t", item.RawText);
             cmd.Parameters.AddWithValue("@a", item.AnnotationsJson);
             cmd.Parameters.AddWithValue("@src", item.Source);
+            cmd.Parameters.AddWithValue("@mode", string.IsNullOrWhiteSpace(item.AnnotationMode) ? global::DocExtractor.Data.ActiveLearning.AnnotationMode.SpanEntity.ToString() : item.AnnotationMode);
+            cmd.Parameters.AddWithValue("@structured", string.IsNullOrWhiteSpace(item.StructuredAnnotationsJson) ? "{}" : item.StructuredAnnotationsJson);
             cmd.Parameters.AddWithValue("@c", item.ConfidenceScore);
             cmd.Parameters.AddWithValue("@v", item.IsVerified ? 1 : 0);
             return (int)(long)cmd.ExecuteScalar()!;
@@ -248,9 +277,22 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
         public void UpdateAnnotation(int id, string annotationsJson, bool isVerified)
         {
             using var cmd = new SQLiteCommand(
-                "UPDATE NlpAnnotatedText SET AnnotationsJson=@a, IsVerified=@v WHERE Id=@id",
+                "UPDATE NlpAnnotatedText SET AnnotationsJson=@a, AnnotationMode=@mode, IsVerified=@v WHERE Id=@id",
                 _conn);
             cmd.Parameters.AddWithValue("@a", annotationsJson);
+            cmd.Parameters.AddWithValue("@mode", global::DocExtractor.Data.ActiveLearning.AnnotationMode.SpanEntity.ToString());
+            cmd.Parameters.AddWithValue("@v", isVerified ? 1 : 0);
+            cmd.Parameters.AddWithValue("@id", id);
+            cmd.ExecuteNonQuery();
+        }
+
+        public void UpdateStructuredAnnotation(int id, string mode, string structuredJson, bool isVerified)
+        {
+            using var cmd = new SQLiteCommand(
+                "UPDATE NlpAnnotatedText SET AnnotationMode=@mode, StructuredAnnotationsJson=@s, IsVerified=@v WHERE Id=@id",
+                _conn);
+            cmd.Parameters.AddWithValue("@mode", string.IsNullOrWhiteSpace(mode) ? global::DocExtractor.Data.ActiveLearning.AnnotationMode.SpanEntity.ToString() : mode);
+            cmd.Parameters.AddWithValue("@s", string.IsNullOrWhiteSpace(structuredJson) ? "{}" : structuredJson);
             cmd.Parameters.AddWithValue("@v", isVerified ? 1 : 0);
             cmd.Parameters.AddWithValue("@id", id);
             cmd.ExecuteNonQuery();
@@ -259,8 +301,8 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
         public List<NlpAnnotatedText> GetAnnotatedTexts(int scenarioId, bool verifiedOnly = false)
         {
             string sql = verifiedOnly
-                ? "SELECT Id, ScenarioId, RawText, AnnotationsJson, Source, ConfidenceScore, IsVerified, CreatedAt FROM NlpAnnotatedText WHERE ScenarioId=@s AND IsVerified=1 ORDER BY Id DESC"
-                : "SELECT Id, ScenarioId, RawText, AnnotationsJson, Source, ConfidenceScore, IsVerified, CreatedAt FROM NlpAnnotatedText WHERE ScenarioId=@s ORDER BY Id DESC";
+                ? "SELECT Id, ScenarioId, RawText, AnnotationsJson, Source, AnnotationMode, StructuredAnnotationsJson, ConfidenceScore, IsVerified, CreatedAt FROM NlpAnnotatedText WHERE ScenarioId=@s AND IsVerified=1 ORDER BY Id DESC"
+                : "SELECT Id, ScenarioId, RawText, AnnotationsJson, Source, AnnotationMode, StructuredAnnotationsJson, ConfidenceScore, IsVerified, CreatedAt FROM NlpAnnotatedText WHERE ScenarioId=@s ORDER BY Id DESC";
             using var cmd = new SQLiteCommand(sql, _conn);
             cmd.Parameters.AddWithValue("@s", scenarioId);
             using var r = cmd.ExecuteReader();
@@ -274,9 +316,11 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
                     RawText = r.GetString(2),
                     AnnotationsJson = r.GetString(3),
                     Source = r.IsDBNull(4) ? "" : r.GetString(4),
-                    ConfidenceScore = r.IsDBNull(5) ? 0f : (float)r.GetDouble(5),
-                    IsVerified = r.GetInt32(6) == 1,
-                    CreatedAt = r.GetString(7)
+                    AnnotationMode = r.IsDBNull(5) ? global::DocExtractor.Data.ActiveLearning.AnnotationMode.SpanEntity.ToString() : r.GetString(5),
+                    StructuredAnnotationsJson = r.IsDBNull(6) ? "{}" : r.GetString(6),
+                    ConfidenceScore = r.IsDBNull(7) ? 0f : (float)r.GetDouble(7),
+                    IsVerified = r.GetInt32(8) == 1,
+                    CreatedAt = r.GetString(9)
                 });
             }
             return result;

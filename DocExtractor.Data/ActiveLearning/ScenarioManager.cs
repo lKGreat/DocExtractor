@@ -25,6 +25,13 @@ namespace DocExtractor.Data.ActiveLearning
                 Name        = "协议字段提取",
                 Description = "从协议规格文档中提取数值、单位、十六进制码、位域范围等字段信息",
                 EntityTypes = new List<string> { "Value", "Unit", "HexCode", "Formula", "Enum", "Condition" },
+                EnabledModes = new List<AnnotationMode>
+                {
+                    AnnotationMode.SpanEntity,
+                    AnnotationMode.KvSchema,
+                    AnnotationMode.EnumBitfield
+                },
+                TemplateConfigJson = AnnotationTemplateFactory.BuildDefaultTemplateJson("协议字段提取"),
                 IsBuiltIn   = true
             },
             new NlpScenario
@@ -32,6 +39,13 @@ namespace DocExtractor.Data.ActiveLearning
                 Name        = "产品参数提取",
                 Description = "从产品规格书或技术文档中提取产品名称、规格参数、容差、物料等信息",
                 EntityTypes = new List<string> { "ProductName", "Spec", "Tolerance", "Material", "Value", "Unit" },
+                EnabledModes = new List<AnnotationMode>
+                {
+                    AnnotationMode.SpanEntity,
+                    AnnotationMode.KvSchema,
+                    AnnotationMode.Relation
+                },
+                TemplateConfigJson = AnnotationTemplateFactory.BuildDefaultTemplateJson("产品参数提取"),
                 IsBuiltIn   = true
             },
             new NlpScenario
@@ -39,6 +53,15 @@ namespace DocExtractor.Data.ActiveLearning
                 Name        = "自由文本提取",
                 Description = "通用场景：支持用户自定义实体类型，适用于任意领域的关键信息提取",
                 EntityTypes = new List<string> { "KeyInfo", "Person", "Organization", "Location", "Date", "Number" },
+                EnabledModes = new List<AnnotationMode>
+                {
+                    AnnotationMode.SpanEntity,
+                    AnnotationMode.KvSchema,
+                    AnnotationMode.EnumBitfield,
+                    AnnotationMode.Relation,
+                    AnnotationMode.Sequence
+                },
+                TemplateConfigJson = AnnotationTemplateFactory.BuildDefaultTemplateJson("自由文本提取"),
                 IsBuiltIn   = true
             }
         };
@@ -69,6 +92,14 @@ namespace DocExtractor.Data.ActiveLearning
         }
 
         public int CreateScenario(string name, string description, List<string> entityTypes)
+            => CreateScenario(name, description, entityTypes, new List<AnnotationMode> { AnnotationMode.SpanEntity }, AnnotationTemplateFactory.BuildDefaultTemplateJson(name));
+
+        public int CreateScenario(
+            string name,
+            string description,
+            List<string> entityTypes,
+            List<AnnotationMode> enabledModes,
+            string templateConfigJson)
         {
             using var repo = new ActiveLearningRepository(_dbPath);
             return repo.AddScenario(new NlpScenario
@@ -76,6 +107,10 @@ namespace DocExtractor.Data.ActiveLearning
                 Name        = name,
                 Description = description,
                 EntityTypes = entityTypes,
+                EnabledModes = enabledModes,
+                TemplateConfigJson = string.IsNullOrWhiteSpace(templateConfigJson)
+                    ? AnnotationTemplateFactory.BuildDefaultTemplateJson(name)
+                    : templateConfigJson,
                 IsBuiltIn   = false
             });
         }

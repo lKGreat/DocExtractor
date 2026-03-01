@@ -238,7 +238,6 @@ namespace DocExtractor.UI.Controls
             _editGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Text",  HeaderText = "实体文本", FillWeight = 40 });
             var typeCol = new DataGridViewComboBoxColumn { Name = "Type", HeaderText = "实体类型", FillWeight = 30, FlatStyle = FlatStyle.Flat };
             foreach (var t in _scenario.EntityTypes) typeCol.Items.Add(t);
-            if (typeCol.Items.Count > 0) typeCol.Items.Add("其他");
             _editGrid.Columns.Add(typeCol);
             _editGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Start", HeaderText = "起始", FillWeight = 15 });
             _editGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "End",   HeaderText = "结束", FillWeight = 15 });
@@ -433,6 +432,12 @@ namespace DocExtractor.UI.Controls
                 }
             }
 
+            if (!ValidateConfirmedAnnotations(_currentEntry.RawText, confirmed, out string error))
+            {
+                MessageBox.Show(error, "标注校验失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             _engine.SubmitCorrection(
                 _currentEntry.RawText,
                 confirmed,
@@ -456,6 +461,54 @@ namespace DocExtractor.UI.Controls
             _skipBtn.Enabled            = false;
 
             RefreshStats();
+        }
+
+        private bool ValidateConfirmedAnnotations(
+            string rawText,
+            List<ActiveEntityAnnotation> annotations,
+            out string error)
+        {
+            error = string.Empty;
+            int textLength = rawText?.Length ?? 0;
+            var validTypes = new HashSet<string>(_scenario.EntityTypes, StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < annotations.Count; i++)
+            {
+                var ann = annotations[i];
+                if (!validTypes.Contains(ann.EntityType))
+                {
+                    error = $"第 {i + 1} 行实体类型“{ann.EntityType}”不在当前场景标签中。";
+                    return false;
+                }
+
+                if (ann.StartIndex < 0 || ann.EndIndex < ann.StartIndex || ann.EndIndex >= textLength)
+                {
+                    error = $"第 {i + 1} 行索引范围无效（{ann.StartIndex}-{ann.EndIndex}）。";
+                    return false;
+                }
+
+                string expected = rawText.Substring(ann.StartIndex, ann.EndIndex - ann.StartIndex + 1);
+                if (!string.Equals(expected, ann.Text, StringComparison.Ordinal))
+                {
+                    error = $"第 {i + 1} 行文本与索引不一致。建议改为“{expected}”。";
+                    return false;
+                }
+            }
+
+            var ordered = annotations
+                .Select((ann, idx) => new { Ann = ann, Index = idx + 1 })
+                .OrderBy(x => x.Ann.StartIndex)
+                .ToList();
+            for (int i = 1; i < ordered.Count; i++)
+            {
+                if (ordered[i].Ann.StartIndex <= ordered[i - 1].Ann.EndIndex)
+                {
+                    error = $"第 {ordered[i - 1].Index} 行与第 {ordered[i].Index} 行存在重叠区间。";
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private void OnSkip(object sender, EventArgs e)

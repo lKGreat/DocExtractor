@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 using DocExtractor.Data.ActiveLearning;
 using DocExtractor.Data.Repositories;
@@ -39,7 +40,7 @@ namespace DocExtractor.UI.Forms
         private Button  _tabDashboard  = null!;
         private Panel   _contentPanel  = null!;
 
-        private NlpTextAnalysisPanel?    _analysisPanel;
+        private NlpUnifiedAnnotationPanel? _analysisPanel;
         private NlpActiveLearningPanel?  _learningPanel;
         private NlpQualityDashboardPanel? _dashboardPanel;
         private Control? _activeControl;
@@ -336,7 +337,12 @@ namespace DocExtractor.UI.Forms
             using var dlg = new NewScenarioDialog();
             if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
-            int id = _scenarioMgr.CreateScenario(dlg.ScenarioName, dlg.Description, dlg.EntityTypes);
+            int id = _scenarioMgr.CreateScenario(
+                dlg.ScenarioName,
+                dlg.Description,
+                dlg.EntityTypes,
+                dlg.EnabledModes,
+                dlg.TemplateConfigJson);
             ReloadScenarioCombo();
             for (int i = 0; i < _scenarios.Count; i++)
             {
@@ -422,11 +428,11 @@ namespace DocExtractor.UI.Forms
             return 0;
         }
 
-        private NlpTextAnalysisPanel GetAnalysisPanel()
+        private NlpUnifiedAnnotationPanel GetAnalysisPanel()
         {
             if (_analysisPanel == null)
             {
-                _analysisPanel = new NlpTextAnalysisPanel(_engine, _activeScenario!);
+                _analysisPanel = new NlpUnifiedAnnotationPanel(_engine, _activeScenario!);
                 _analysisPanel.AnnotationSubmitted += () =>
                 {
                     UpdateStatus($"已提交标注，当前场景共 {_engine.GetVerifiedCount(_activeScenario!.Id)} 条样本");
@@ -493,15 +499,19 @@ namespace DocExtractor.UI.Forms
         public string       ScenarioName { get; private set; } = string.Empty;
         public string       Description  { get; private set; } = string.Empty;
         public List<string> EntityTypes  { get; private set; } = new List<string>();
+        public List<AnnotationMode> EnabledModes { get; private set; } = new List<AnnotationMode> { AnnotationMode.SpanEntity };
+        public string TemplateConfigJson { get; private set; } = "{}";
 
         private TextBox _nameBox  = null!;
         private TextBox _descBox  = null!;
         private TextBox _typesBox = null!;
+        private CheckedListBox _modeList = null!;
+        private TextBox _templateBox = null!;
 
         public NewScenarioDialog()
         {
             Text            = "新建场景";
-            Size            = new Size(460, 320);
+            Size            = new Size(560, 520);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition   = FormStartPosition.CenterParent;
             MaximizeBox     = false;
@@ -513,12 +523,14 @@ namespace DocExtractor.UI.Forms
                 Dock        = DockStyle.Fill,
                 ColumnCount = 2,
                 Padding     = new Padding(14),
-                RowCount    = 5
+                RowCount    = 7
             };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
@@ -531,6 +543,23 @@ namespace DocExtractor.UI.Forms
                 Multiline  = true,
                 ScrollBars = ScrollBars.Vertical,
                 Text       = "KeyInfo\nPerson\nOrganization\nDate\nNumber"
+            };
+            _modeList = new CheckedListBox
+            {
+                Dock = DockStyle.Fill,
+                CheckOnClick = true
+            };
+            _modeList.Items.Add(AnnotationMode.SpanEntity, true);
+            _modeList.Items.Add(AnnotationMode.KvSchema, true);
+            _modeList.Items.Add(AnnotationMode.EnumBitfield, true);
+            _modeList.Items.Add(AnnotationMode.Relation, true);
+            _modeList.Items.Add(AnnotationMode.Sequence, true);
+            _templateBox = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                Text = AnnotationTemplateFactory.BuildDefaultTemplateJson("自定义场景")
             };
 
             var hint = new Label
@@ -554,15 +583,26 @@ namespace DocExtractor.UI.Forms
                 ScenarioName = _nameBox.Text.Trim();
                 Description  = _descBox.Text.Trim();
                 EntityTypes  = new List<string>();
+                EnabledModes = new List<AnnotationMode>();
                 foreach (var line in _typesBox.Lines)
                 {
                     string t = line.Trim();
                     if (!string.IsNullOrEmpty(t)) EntityTypes.Add(t);
                 }
+                foreach (var item in _modeList.CheckedItems)
+                {
+                    if (item is AnnotationMode mode)
+                        EnabledModes.Add(mode);
+                }
+                TemplateConfigJson = _templateBox.Text.Trim();
+                if (string.IsNullOrWhiteSpace(TemplateConfigJson))
+                    TemplateConfigJson = AnnotationTemplateFactory.BuildDefaultTemplateJson(ScenarioName);
                 if (string.IsNullOrEmpty(ScenarioName))
                 { MessageBox.Show("场景名称不能为空", "提示"); DialogResult = DialogResult.None; }
                 else if (EntityTypes.Count == 0)
                 { MessageBox.Show("至少需要一种实体类型", "提示"); DialogResult = DialogResult.None; }
+                else if (EnabledModes.Count == 0)
+                { MessageBox.Show("至少需要选择一种标注模式", "提示"); DialogResult = DialogResult.None; }
             };
 
             var cancelBtn = NlpLabTheme.MakeGhost(new Button
@@ -581,6 +621,10 @@ namespace DocExtractor.UI.Forms
             layout.Controls.Add(_descBox);
             layout.Controls.Add(new Label { Text = "实体类型", TextAlign = ContentAlignment.TopRight, Dock = DockStyle.Fill, Padding = new Padding(0, 6, 0, 0) });
             layout.Controls.Add(_typesBox);
+            layout.Controls.Add(new Label { Text = "标注模式", TextAlign = ContentAlignment.TopRight, Dock = DockStyle.Fill, Padding = new Padding(0, 6, 0, 0) });
+            layout.Controls.Add(_modeList);
+            layout.Controls.Add(new Label { Text = "模板JSON", TextAlign = ContentAlignment.TopRight, Dock = DockStyle.Fill, Padding = new Padding(0, 6, 0, 0) });
+            layout.Controls.Add(_templateBox);
             layout.Controls.Add(new Label());
             layout.Controls.Add(hint);
             layout.Controls.Add(new Label());

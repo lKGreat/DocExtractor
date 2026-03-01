@@ -106,8 +106,55 @@ namespace DocExtractor.Data.ActiveLearning
                     RawText         = rawText,
                     AnnotationsJson = annotationsJson,
                     Source          = "manual_correction",
+                    AnnotationMode  = AnnotationMode.SpanEntity.ToString(),
+                    StructuredAnnotationsJson = "{}",
                     ConfidenceScore = originalConfidence,
                     IsVerified      = true
+                });
+            }
+
+            if (uncertainEntryId.HasValue)
+                repo.MarkUncertainReviewed(uncertainEntryId.Value, isSkipped: false);
+
+            return id;
+        }
+
+        public int SubmitStructuredCorrection(
+            string rawText,
+            int scenarioId,
+            AnnotationMode mode,
+            string structuredAnnotationsJson,
+            float originalConfidence = 0f,
+            int? uncertainEntryId = null)
+        {
+            string safeRaw = rawText ?? string.Empty;
+            string safeStructured = string.IsNullOrWhiteSpace(structuredAnnotationsJson)
+                ? "{}"
+                : structuredAnnotationsJson;
+
+            using var repo = new ActiveLearningRepository(_dbPath);
+
+            var existing = repo.GetAnnotatedTexts(scenarioId)
+                .FirstOrDefault(t => t.RawText.Equals(safeRaw, StringComparison.Ordinal));
+
+            int id;
+            if (existing != null)
+            {
+                repo.UpdateStructuredAnnotation(existing.Id, mode.ToString(), safeStructured, isVerified: true);
+                id = existing.Id;
+            }
+            else
+            {
+                id = repo.AddAnnotatedText(new NlpAnnotatedText
+                {
+                    ScenarioId = scenarioId,
+                    RawText = safeRaw,
+                    AnnotationsJson = "[]",
+                    Source = "manual_structured",
+                    AnnotationMode = mode.ToString(),
+                    StructuredAnnotationsJson = safeStructured,
+                    ConfidenceScore = originalConfidence,
+                    IsVerified = true
                 });
             }
 

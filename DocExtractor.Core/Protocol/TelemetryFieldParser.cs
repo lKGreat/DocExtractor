@@ -111,7 +111,7 @@ namespace DocExtractor.Core.Protocol
                     field.ByteSequence = lastByteSeq;
 
                 ExtractUnit(remarks, name, field);
-                ExtractEnum(remarks, field);
+                ExtractEnum(name, remarks, field);
                 ExtractDataType(remarks, field);
                 ClassifySpecialFields(byteSeq, name, field);
 
@@ -221,6 +221,14 @@ namespace DocExtractor.Core.Protocol
                 Remarks = field.Remarks,
                 Unit = field.Unit,
                 EnumMapping = field.EnumMapping,
+                EnumEntries = field.EnumEntries.Select(e => new ProtocolEnumEntry
+                {
+                    FieldName = "b7-b4:" + hi,
+                    BitOffset = 4,
+                    BitLength = 4,
+                    Value = e.Value,
+                    Description = e.Description
+                }).ToList(),
                 DataTypeHint = field.DataTypeHint
             };
 
@@ -234,6 +242,14 @@ namespace DocExtractor.Core.Protocol
                 Remarks = field.Remarks,
                 Unit = field.Unit,
                 EnumMapping = field.EnumMapping,
+                EnumEntries = field.EnumEntries.Select(e => new ProtocolEnumEntry
+                {
+                    FieldName = "b3-b0:" + lo,
+                    BitOffset = 0,
+                    BitLength = 4,
+                    Value = e.Value,
+                    Description = e.Description
+                }).ToList(),
                 DataTypeHint = field.DataTypeHint
             };
 
@@ -543,6 +559,7 @@ namespace DocExtractor.Core.Protocol
                 field.BitOffset = lowBit;
                 field.BitLength = Math.Abs(a - b) + 1;
                 string desc = (bitMatch.Groups.Count >= 4 ? bitMatch.Groups[3].Value : "").Trim();
+                desc = TrimTrailingEnumTokens(desc);
                 if (desc.Length == 0)
                     desc = name.Trim();
                 field.FieldName = $"b{highBit}-b{lowBit}:{desc}";
@@ -556,6 +573,7 @@ namespace DocExtractor.Core.Protocol
                 field.BitOffset = bit;
                 field.BitLength = 1;
                 string desc = (singleBitMatch.Groups.Count >= 3 ? singleBitMatch.Groups[2].Value : "").Trim();
+                desc = TrimTrailingEnumTokens(desc);
                 if (desc.Length == 0)
                     desc = name.Trim();
                 field.FieldName = $"b{bit}:{desc}";
@@ -569,6 +587,7 @@ namespace DocExtractor.Core.Protocol
                 {
                     string prefix = name.Substring(0, colonIdx);
                     string desc = name.Substring(colonIdx + 1).Trim();
+                    desc = TrimTrailingEnumTokens(desc);
 
                     var nums = Regex.Matches(prefix, @"\d+");
                     if (nums.Count >= 2)
@@ -589,7 +608,7 @@ namespace DocExtractor.Core.Protocol
                 }
             }
 
-            field.FieldName = name;
+            field.FieldName = TrimTrailingEnumTokens(name);
         }
 
         private void ExtractUnit(string remarks, string name, ProtocolTelemetryField field)
@@ -636,76 +655,78 @@ namespace DocExtractor.Core.Protocol
             return unit;
         }
 
-        private void ExtractEnum(string remarks, ProtocolTelemetryField field)
+        private void ExtractEnum(string name, string remarks, ProtocolTelemetryField field)
         {
-            if (string.IsNullOrEmpty(remarks)) return;
-
-            if (!remarks.Contains("|") && !remarks.Contains("；") &&
-                !Regex.IsMatch(remarks, @"0[xX][\dA-Fa-f]+\s*[-–:：]"))
+            string source = $"{name} {remarks}".Trim();
+            if (string.IsNullOrWhiteSpace(source))
                 return;
 
-            string enumStr = remarks;
-            if (remarks.Contains("|"))
+            var entries = new List<ProtocolEnumEntry>();
+
+            var hexMatches = EnumRx.Matches(source);
+            foreach (Match m in hexMatches)
             {
-                int startIdx = 0;
-                var hexStart = Regex.Match(remarks, @"0[xX][\dA-Fa-f]+");
-                if (hexStart.Success) startIdx = hexStart.Index;
-
-                int digitStart = -1;
-                for (int i = 0; i < remarks.Length; i++)
-                {
-                    if (char.IsDigit(remarks[i]))
-                    {
-                        int pipeAfter = remarks.IndexOf('|', i);
-                        if (pipeAfter > i)
-                        {
-                            digitStart = i;
-                            break;
-                        }
-                    }
-                }
-
-                if (hexStart.Success)
-                    startIdx = hexStart.Index;
-                else if (digitStart >= 0)
-                    startIdx = digitStart;
-
-                enumStr = remarks.Substring(startIdx);
+                string value = m.Groups[1].Value.Trim();
+                string desc = m.Groups[2].Value.Trim();
+                if (!IsValidEnumDescription(desc)) continue;
+                entries.Add(BuildEnumEntry(field, value, desc));
             }
 
-            var hexMatches = EnumRx.Matches(enumStr);
-            if (hexMatches.Count > 0)
+            if (entries.Count < 2)
             {
-                var parts = new List<string>();
-                foreach (Match m in hexMatches)
+                var decMatches = EnumDecimalRx.Matches(source);
+                foreach (Match m in decMatches)
                 {
+                    string value = m.Groups[1].Value.Trim();
                     string desc = m.Groups[2].Value.Trim();
                     if (!IsValidEnumDescription(desc)) continue;
-                    parts.Add(m.Groups[1].Value + "-" + desc);
-                }
-                if (parts.Count >= 2)
-                {
-                    field.EnumMapping = string.Join("|", parts);
-                    return;
+                    entries.Add(BuildEnumEntry(field, value, desc));
                 }
             }
 
-            if (remarks.Contains("|"))
+            // Fallback for token lists like "0x01/0x02/0x03" where no description is present.
+            if (entries.Count < 2)
             {
-                var decMatches = EnumDecimalRx.Matches(enumStr);
-                if (decMatches.Count >= 2)
+                var tokenMatches = Regex.Matches(source, @"0[xX][\dA-Fa-f]+");
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (Match match in tokenMatches)
                 {
-                    var parts = new List<string>();
-                    foreach (Match m in decMatches)
-                    {
-                        string desc = m.Groups[2].Value.Trim();
-                        if (!IsValidEnumDescription(desc)) continue;
-                        parts.Add(m.Groups[1].Value + "-" + desc);
-                    }
-                    if (parts.Count >= 2)
-                        field.EnumMapping = string.Join("|", parts);
+                    string value = match.Value;
+                    if (!seen.Add(value)) continue;
+                    entries.Add(BuildEnumEntry(field, value, value));
                 }
             }
+
+            if (entries.Count >= 2)
+            {
+                field.EnumEntries = entries;
+                field.EnumMapping = string.Join("|", entries.Select(e => $"{e.Value}-{e.Description}"));
+            }
+        }
+
+        private static ProtocolEnumEntry BuildEnumEntry(ProtocolTelemetryField field, string value, string description)
+        {
+            return new ProtocolEnumEntry
+            {
+                FieldName = field.FieldName ?? "",
+                BitOffset = field.BitOffset,
+                BitLength = field.BitLength,
+                Value = value,
+                Description = description
+            };
+        }
+
+        private static string TrimTrailingEnumTokens(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return text;
+
+            string trimmed = text.Trim();
+            var listTail = Regex.Match(trimmed, @"\s+0[xX][\dA-Fa-f]+(?:\s*[/／|、,，;；]\s*0[xX][\dA-Fa-f]+)+\s*$");
+            if (listTail.Success)
+                trimmed = trimmed.Substring(0, listTail.Index).Trim();
+
+            return trimmed;
         }
 
         private static bool IsValidEnumDescription(string desc)

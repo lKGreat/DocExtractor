@@ -32,6 +32,9 @@ namespace DocExtractor.Core.Protocol
         /// <summary>Enum mapping extracted from remarks (e.g. "0x55-点火未成功|0xAA-点火成功")</summary>
         public string EnumMapping { get; set; } = "";
 
+        /// <summary>Structured enum entries for downstream device-structure extraction/export.</summary>
+        public List<ProtocolEnumEntry> EnumEntries { get; set; } = new List<ProtocolEnumEntry>();
+
         /// <summary>Whether this field is a header/length field (Dh, Dl) rather than data</summary>
         public bool IsHeaderField { get; set; }
 
@@ -43,6 +46,15 @@ namespace DocExtractor.Core.Protocol
 
         /// <summary>Data type hint extracted from remarks (UINT16, UINT8, etc.)</summary>
         public string DataTypeHint { get; set; } = "";
+    }
+
+    public class ProtocolEnumEntry
+    {
+        public string FieldName { get; set; } = "";
+        public int BitOffset { get; set; } = -1;
+        public int BitLength { get; set; }
+        public string Value { get; set; } = "";
+        public string Description { get; set; } = "";
     }
 
     /// <summary>

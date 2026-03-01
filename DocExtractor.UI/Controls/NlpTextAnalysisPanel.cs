@@ -655,6 +655,12 @@ namespace DocExtractor.UI.Controls
                 return;
             }
 
+            if (!ValidateCurrentAnnotations(out string error))
+            {
+                MessageBox.Show(error, "标注校验失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             _engine.SubmitCorrection(
                 _currentText,
                 _currentEntities,
@@ -669,6 +675,55 @@ namespace DocExtractor.UI.Controls
 
             AnnotationSubmitted?.Invoke();
             ClearAll();
+        }
+
+        private bool ValidateCurrentAnnotations(out string error)
+        {
+            error = string.Empty;
+            if (_currentEntities.Count == 0)
+            {
+                error = "当前没有可提交的实体。";
+                return false;
+            }
+
+            var validTypes = new HashSet<string>(_scenario.EntityTypes, StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < _currentEntities.Count; i++)
+            {
+                var ann = _currentEntities[i];
+                if (!validTypes.Contains(ann.EntityType))
+                {
+                    error = $"第 {i + 1} 行实体类型“{ann.EntityType}”不在当前场景标签中。";
+                    return false;
+                }
+
+                if (ann.StartIndex < 0 || ann.EndIndex < ann.StartIndex || ann.EndIndex >= _currentText.Length)
+                {
+                    error = $"第 {i + 1} 行索引范围无效（{ann.StartIndex}-{ann.EndIndex}）。";
+                    return false;
+                }
+
+                string expected = _currentText.Substring(ann.StartIndex, ann.EndIndex - ann.StartIndex + 1);
+                if (!string.Equals(expected, ann.Text, StringComparison.Ordinal))
+                {
+                    error = $"第 {i + 1} 行文本与索引不一致。建议改为“{expected}”。";
+                    return false;
+                }
+            }
+
+            var ordered = _currentEntities
+                .Select((ann, idx) => new { Ann = ann, Index = idx + 1 })
+                .OrderBy(x => x.Ann.StartIndex)
+                .ToList();
+            for (int i = 1; i < ordered.Count; i++)
+            {
+                if (ordered[i].Ann.StartIndex <= ordered[i - 1].Ann.EndIndex)
+                {
+                    error = $"第 {ordered[i - 1].Index} 行与第 {ordered[i].Index} 行存在重叠区间。";
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         // ── Helpers ─────────────────────────────────────────────────────────
