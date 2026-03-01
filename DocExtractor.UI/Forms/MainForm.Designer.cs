@@ -58,6 +58,8 @@ namespace DocExtractor.UI.Forms
             toolMenu.DropDownItems.Add(new ToolStripMenuItem("模型版本管理", null, (s, e) => OnOpenModelManager()));
             toolMenu.DropDownItems.Add(new ToolStripSeparator());
             toolMenu.DropDownItems.Add(new ToolStripMenuItem("配置包管理器", null, (s, e) => OnOpenPackManager()));
+            toolMenu.DropDownItems.Add(new ToolStripSeparator());
+            toolMenu.DropDownItems.Add(new ToolStripMenuItem("NLP 主动学习实验室", null, (s, e) => OnOpenNlpLab()) { ShortcutKeys = System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.L });
 
             var diagnoseMenu = new ToolStripMenuItem("诊断(&D)");
             diagnoseMenu.DropDownItems.Add(new ToolStripMenuItem("系统健康度报告", null, (s, e) => OnOpenDiagnostics()));
@@ -81,7 +83,20 @@ namespace DocExtractor.UI.Forms
             this._configCombo.DropDownStyle = ComboBoxStyle.DropDownList;
             this._configCombo.Font = new Font("微软雅黑", 9F);
 
-            toolFlow.Controls.AddRange(new Control[] { configLabel, this._configCombo });
+            var nlpLabBtn = new Button
+            {
+                Text      = "🧠 NLP实验室",
+                Width     = 110,
+                Height    = 34,
+                FlatStyle = FlatStyle.Flat,
+                Font      = new Font("微软雅黑", 8.5F),
+                BackColor = Color.FromArgb(24, 144, 255),
+                ForeColor = Color.White
+            };
+            nlpLabBtn.FlatAppearance.BorderSize = 0;
+            nlpLabBtn.Click += (s, e) => OnOpenNlpLab();
+
+            toolFlow.Controls.AddRange(new Control[] { configLabel, this._configCombo, nlpLabBtn });
             this._toolbar.Controls.Add(toolFlow);
 
             // ── Nav Panel (left sidebar) ──────────────────────────────────────

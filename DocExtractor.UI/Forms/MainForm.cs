@@ -179,6 +179,13 @@ namespace DocExtractor.UI.Forms
             form.ShowDialog(this);
         }
 
+        private void OnOpenNlpLab()
+        {
+            var lab = new NlpLabForm(_ctx.DbPath, _ctx.ModelsDir, _ctx.NerModel);
+            lab.FormClosed += (s, e) => lab.Dispose();
+            lab.Show(this);
+        }
+
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
             _ctx.Dispose();

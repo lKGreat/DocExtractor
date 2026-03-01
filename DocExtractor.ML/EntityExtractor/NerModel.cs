@@ -17,8 +17,10 @@ namespace DocExtractor.ML.EntityExtractor
         private readonly MLContext _mlContext;
         private ITransformer? _model;
 
-        // NAS-BERT 句级推理引擎
+        // NAS-BERT 句级推理引擎（仅标签）
         private PredictionEngine<NerWordInput, NerWordOutput>? _wordEngine;
+        // NAS-BERT 句级推理引擎（含置信度分数）
+        private PredictionEngine<NerWordInput, NerWordOutputWithScore>? _wordEngineWithScore;
 
         // 旧格式字符级推理引擎（降级兼容）
         private PredictionEngine<NerInput, NerPrediction>? _charEngine;
@@ -45,9 +47,18 @@ namespace DocExtractor.ML.EntityExtractor
                 {
                     // 尝试加载为 NAS-BERT 句级模型
                     _wordEngine?.Dispose();
+                    _wordEngineWithScore?.Dispose();
                     _charEngine?.Dispose();
                     _model = _mlContext.Model.Load(modelPath, out _);
                     _wordEngine = _mlContext.Model.CreatePredictionEngine<NerWordInput, NerWordOutput>(_model);
+                    try
+                    {
+                        _wordEngineWithScore = _mlContext.Model.CreatePredictionEngine<NerWordInput, NerWordOutputWithScore>(_model);
+                    }
+                    catch
+                    {
+                        _wordEngineWithScore = null;
+                    }
                     _charEngine = null;
                     _useCharLevel = false;
                 }
@@ -92,6 +103,97 @@ namespace DocExtractor.ML.EntityExtractor
         public IReadOnlyList<NamedEntity> Extract(string text, EntityType type)
         {
             return Extract(text).Where(e => e.Type == type).ToList();
+        }
+
+        /// <summary>
+        /// 带真实置信度的提取：利用 NAS-BERT softmax 分数填充 NamedEntity.Confidence
+        /// 返回包含精确置信度的实体列表（而非硬编码的 0.8f）
+        /// </summary>
+        public IReadOnlyList<NamedEntity> ExtractWithConfidence(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return Array.Empty<NamedEntity>();
+
+            var ruleEntities = _ruleExtractor.Extract(text);
+            if (!IsLoaded) return ruleEntities;
+
+            var mlEntities = _useCharLevel
+                ? ExtractWithCharLevel(text)
+                : ExtractWithWordLevelAndConfidence(text);
+
+            return MergeEntities(ruleEntities, mlEntities);
+        }
+
+        /// <summary>
+        /// 计算整段文本的平均预测置信度（用于不确定性采样）
+        /// 值越低说明模型越不确定
+        /// </summary>
+        public float ComputeTextConfidence(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text) || !IsLoaded || _useCharLevel || _wordEngineWithScore == null)
+                return 0.5f;
+
+            try
+            {
+                var chars = text.ToCharArray();
+                string spaceSeparated = string.Join(" ", chars.Select(c => c.ToString()));
+
+                NerWordOutputWithScore output;
+                lock (_lock)
+                {
+                    if (_wordEngineWithScore == null) return 0.5f;
+                    var input = new NerWordInput { Sentence = spaceSeparated };
+                    output = _wordEngineWithScore.Predict(input);
+                }
+
+                if (output.Score == null || output.Score.Length == 0) return 0.5f;
+
+                // Score 是 [numTokens * numLabels] 的展平数组或每个 token 的最高分
+                // 使用每个 token 最高分的均值作为置信度
+                int numTokens = chars.Length;
+                int numLabels = output.Score.Length / numTokens;
+                if (numLabels <= 0) return 0.5f;
+
+                float totalConf = 0f;
+                for (int i = 0; i < numTokens; i++)
+                {
+                    float max = float.MinValue;
+                    for (int j = 0; j < numLabels; j++)
+                    {
+                        int idx = i * numLabels + j;
+                        if (idx < output.Score.Length && output.Score[idx] > max)
+                            max = output.Score[idx];
+                    }
+                    if (max > float.MinValue) totalConf += max;
+                }
+                return numTokens > 0 ? totalConf / numTokens : 0.5f;
+            }
+            catch
+            {
+                return 0.5f;
+            }
+        }
+
+        /// <summary>NAS-BERT 整句推理（带置信度）</summary>
+        private IReadOnlyList<NamedEntity> ExtractWithWordLevelAndConfidence(string text)
+        {
+            // 如果带置信度引擎不可用，降级到普通推理
+            if (_wordEngineWithScore == null) return ExtractWithWordLevel(text);
+
+            var chars = text.ToCharArray();
+            string spaceSeparated = string.Join(" ", chars.Select(c => c.ToString()));
+
+            NerWordOutputWithScore output;
+            lock (_lock)
+            {
+                if (_wordEngineWithScore == null) return ExtractWithWordLevel(text);
+                var input = new NerWordInput { Sentence = spaceSeparated };
+                output = _wordEngineWithScore.Predict(input);
+            }
+
+            if (output.PredictedLabel == null || output.PredictedLabel.Length == 0)
+                return Array.Empty<NamedEntity>();
+
+            return DecodeBIOSequenceWithScore(text, output.PredictedLabel.ToList(), output.Score);
         }
 
         /// <summary>NAS-BERT 整句推理</summary>
@@ -143,6 +245,61 @@ namespace DocExtractor.ML.EntityExtractor
             }
 
             return DecodeBIOSequence(text, predictions);
+        }
+
+        /// <summary>BIO 序列解码（带置信度分数）</summary>
+        private static IReadOnlyList<NamedEntity> DecodeBIOSequenceWithScore(string text, List<string> tags, float[]? scores)
+        {
+            var entities = new List<NamedEntity>();
+            int i = 0;
+
+            while (i < tags.Count)
+            {
+                string tag = tags[i];
+                if (tag.StartsWith("B-"))
+                {
+                    string entityTypeStr = tag.Substring(2);
+                    int start = i;
+                    int end = i;
+
+                    while (end + 1 < tags.Count && tags[end + 1] == "I-" + entityTypeStr)
+                        end++;
+
+                    int safeEnd = Math.Min(end, text.Length - 1);
+                    if (Enum.TryParse<EntityType>(entityTypeStr, true, out var entityType))
+                    {
+                        // 计算该实体跨越 tokens 的平均置信度
+                        float conf = 0.8f;
+                        if (scores != null && scores.Length > 0)
+                        {
+                            float sum = 0f;
+                            int count = 0;
+                            for (int k = start; k <= end && k < scores.Length; k++)
+                            {
+                                sum += scores[k];
+                                count++;
+                            }
+                            if (count > 0) conf = sum / count;
+                        }
+
+                        entities.Add(new NamedEntity
+                        {
+                            Text = text.Substring(start, safeEnd - start + 1),
+                            Type = entityType,
+                            StartIndex = start,
+                            EndIndex = safeEnd,
+                            Confidence = conf
+                        });
+                    }
+                    i = end + 1;
+                }
+                else
+                {
+                    i++;
+                }
+            }
+
+            return entities;
         }
 
         /// <summary>BIO 序列解码：将字符级标签还原为实体</summary>
@@ -209,6 +366,7 @@ namespace DocExtractor.ML.EntityExtractor
         public void Dispose()
         {
             _wordEngine?.Dispose();
+            _wordEngineWithScore?.Dispose();
             _charEngine?.Dispose();
         }
     }

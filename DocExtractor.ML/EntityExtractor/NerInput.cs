@@ -70,4 +70,15 @@ namespace DocExtractor.ML.EntityExtractor
         [ColumnName("PredictedLabel")]
         public string[] PredictedLabel { get; set; } = Array.Empty<string>();
     }
+
+    /// <summary>NER 推理输出（含 softmax 置信度分数，用于主动学习不确定性采样）</summary>
+    public class NerWordOutputWithScore
+    {
+        [ColumnName("PredictedLabel")]
+        public string[] PredictedLabel { get; set; } = Array.Empty<string>();
+
+        /// <summary>每个 token 的最高 softmax 分数（即该 token 的预测置信度）</summary>
+        [ColumnName("Score")]
+        public float[]? Score { get; set; }
+    }
 }
