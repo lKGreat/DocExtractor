@@ -52,34 +52,44 @@ namespace DocExtractor.ML.EntityExtractor
             // 拆分训练集和验证集
             var split = _mlContext.Data.TrainTestSplit(dataView, testFraction: p.TestFraction, seed: p.Seed);
 
+            // 先统一构建标签字典，再同时转换训练集/验证集，确保 LabelKey 一致
+            var labelKeyEstimator = _mlContext.Transforms.Conversion.MapValueToKey(
+                outputColumnName: "LabelKey",
+                inputColumnName: "Label");
+            var labelKeyTransformer = labelKeyEstimator.Fit(dataView);
+            var keyedData = labelKeyTransformer.Transform(dataView);
+            var keyedValidation = labelKeyTransformer.Transform(split.TestSet);
+
             cancellation.ThrowIfCancellationRequested();
             progress?.Report($"构建 NAS-BERT NER Pipeline (Epochs={p.NerEpochs}, Batch={p.NerBatchSize})...");
 
+            // 训练器要求标签列为 Key 类型（底层 U4）
+            // 训练后将预测标签从 Key 还原为 string[] 以兼容现有推理代码。
             var pipeline = _mlContext.MulticlassClassification.Trainers.NamedEntityRecognition(
-                labelColumnName: "Label",
-                outputColumnName: "PredictedLabel",
-                sentence1ColumnName: "Sentence",
-                batchSize: p.NerBatchSize,
-                maxEpochs: p.NerEpochs,
-                validationSet: split.TestSet);
+                    labelColumnName: "LabelKey",
+                    outputColumnName: "PredictedLabel",
+                    sentence1ColumnName: "Sentence",
+                    batchSize: p.NerBatchSize,
+                    maxEpochs: p.NerEpochs,
+                    validationSet: keyedValidation)
+                .Append(_mlContext.Transforms.Conversion.MapKeyToValue(
+                    outputColumnName: "PredictedLabel",
+                    inputColumnName: "PredictedLabel"));
 
             cancellation.ThrowIfCancellationRequested();
             progress?.Report("开始训练（NAS-BERT NER，首次运行将下载预训练权重）...");
 
             // 用全量数据训练最终模型
-            var model = pipeline.Fit(dataView);
+            var model = pipeline.Fit(keyedData);
 
             progress?.Report("评估模型...");
-            var testPredictions = model.Transform(split.TestSet);
-            var metrics = _mlContext.MulticlassClassification.Evaluate(
-                testPredictions,
-                labelColumnName: "Label",
-                predictedLabelColumnName: "PredictedLabel");
+            var testPredictions = model.Transform(keyedValidation);
+            var metrics = ComputeTokenLevelMetrics(testPredictions);
 
             cancellation.ThrowIfCancellationRequested();
 
             Directory.CreateDirectory(Path.GetDirectoryName(modelSavePath));
-            _mlContext.Model.Save(model, dataView.Schema, modelSavePath);
+            _mlContext.Model.Save(model, keyedData.Schema, modelSavePath);
 
             progress?.Report("NER 模型训练完成！");
 
@@ -100,6 +110,41 @@ namespace DocExtractor.ML.EntityExtractor
                 CrossValidationStdDev = 0,
                 CrossValidationFolds = 0
             };
+        }
+
+        private (double MicroAccuracy, double MacroAccuracy) ComputeTokenLevelMetrics(IDataView predictions)
+        {
+            var rows = _mlContext.Data.CreateEnumerable<NerEvalRow>(predictions, reuseRowObject: false);
+            long total = 0;
+            long correct = 0;
+            var perLabel = new Dictionary<string, (long Correct, long Total)>(StringComparer.Ordinal);
+
+            foreach (var row in rows)
+            {
+                if (row.Label == null || row.PredictedLabel == null) continue;
+                int n = Math.Min(row.Label.Length, row.PredictedLabel.Length);
+                for (int i = 0; i < n; i++)
+                {
+                    var gold = row.Label[i] ?? "O";
+                    var pred = row.PredictedLabel[i] ?? "O";
+
+                    total++;
+                    bool isCorrect = string.Equals(gold, pred, StringComparison.Ordinal);
+                    if (isCorrect) correct++;
+
+                    if (!perLabel.TryGetValue(gold, out var stat))
+                        stat = (0, 0);
+                    stat.Total++;
+                    if (isCorrect) stat.Correct++;
+                    perLabel[gold] = stat;
+                }
+            }
+
+            double micro = total > 0 ? (double)correct / total : 0;
+            double macro = perLabel.Count > 0
+                ? perLabel.Values.Average(v => v.Total > 0 ? (double)v.Correct / v.Total : 0)
+                : 0;
+            return (micro, macro);
         }
     }
 
@@ -135,5 +180,11 @@ namespace DocExtractor.ML.EntityExtractor
                 : $"准确率(Micro): {MicroAccuracy:P2}";
             return $"{acc} | 文本样本: {TextSampleCount} | 字符标记: {CharSampleCount}";
         }
+    }
+
+    internal class NerEvalRow
+    {
+        public string[] Label { get; set; } = Array.Empty<string>();
+        public string[] PredictedLabel { get; set; } = Array.Empty<string>();
     }
 }

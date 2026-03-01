@@ -305,7 +305,10 @@ namespace DocExtractor.Data.ActiveLearning
             catch (Exception ex)
             {
                 result.Success = false;
-                result.Message = $"训练失败: {ex.Message}";
+                var detail = ex.InnerException != null
+                    ? $"{ex.Message} | Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}"
+                    : ex.Message;
+                result.Message = $"训练失败: {ex.GetType().Name}: {detail}";
             }
             finally
             {

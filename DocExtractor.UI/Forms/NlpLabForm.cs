@@ -29,6 +29,7 @@ namespace DocExtractor.UI.Forms
         private Button   _newScenarioBtn     = null!;
         private Button   _deleteScenarioBtn  = null!;
         private Button   _importTextsBtn     = null!;
+        private Button   _seedProductBtn     = null!;
         private Label    _statusBar          = null!;
         private Label    _modelStatusLabel   = null!;
         private Panel    _mainContainer      = null!;
@@ -171,8 +172,16 @@ namespace DocExtractor.UI.Forms
             });
             _importTextsBtn.Click += OnImportTexts;
 
+            _seedProductBtn = NlpLabTheme.MakeSuccess(new Button
+            {
+                Text   = "导入30条产品种子",
+                Width  = 120,
+                Height = 32
+            });
+            _seedProductBtn.Click += OnSeedProductData;
+
             scenarioBar.Controls.AddRange(new Control[] {
-                scenarioLabel, _scenarioCombo, _newScenarioBtn, _deleteScenarioBtn, _importTextsBtn
+                scenarioLabel, _scenarioCombo, _newScenarioBtn, _deleteScenarioBtn, _importTextsBtn, _seedProductBtn
             });
 
             toolbar.Controls.Add(scenarioBar);
@@ -320,6 +329,7 @@ namespace DocExtractor.UI.Forms
 
             _activeScenario = _scenarios[idx];
             _deleteScenarioBtn.Enabled = !_activeScenario.IsBuiltIn;
+            _seedProductBtn.Enabled = string.Equals(_activeScenario.Name, "产品参数提取", StringComparison.OrdinalIgnoreCase);
 
             DisposePanel(ref _analysisPanel);
             DisposePanel(ref _learningPanel);
@@ -389,6 +399,23 @@ namespace DocExtractor.UI.Forms
                 UpdateStatus($"已导入 {count} 条文本到主动学习队列");
 
                 _learningPanel?.OnActivated();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"导入失败：{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void OnSeedProductData(object sender, EventArgs e)
+        {
+            try
+            {
+                int inserted = ProductParameterSeedData.SeedProductParameterSamples(_dbPath);
+                MessageBox.Show($"已插入 {inserted} 条产品参数训练样本（重复文本已跳过）",
+                    "导入完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                UpdateStatus($"产品参数种子数据：新增 {inserted} 条");
+                _learningPanel?.OnActivated();
+                _analysisPanel?.SetScenario(_activeScenario!);
             }
             catch (Exception ex)
             {
