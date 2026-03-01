@@ -89,9 +89,20 @@ namespace DocExtractor.UI.Controls
 
             mainSplit.Panel2.Controls.Add(BuildEntitySection());
 
-            var root = new Panel { Dock = DockStyle.Fill };
-            root.Controls.Add(mainSplit);
-            root.Controls.Add(BuildQuickStartBar());
+            var root = new TableLayoutPanel
+            {
+                Dock        = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount    = 2,
+                Margin      = new Padding(0),
+                Padding     = new Padding(0)
+            };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            root.Controls.Add(BuildQuickStartBar(), 0, 0);
+            root.Controls.Add(mainSplit, 0, 1);
             this.Controls.Add(root);
         }
 
@@ -99,10 +110,10 @@ namespace DocExtractor.UI.Controls
         {
             var bar = new Panel
             {
-                Dock      = DockStyle.Top,
-                Height    = 40,
+                Dock      = DockStyle.Fill,
                 BackColor = Color.FromArgb(246, 250, 255),
-                Padding   = new Padding(8, 4, 8, 4)
+                Padding   = new Padding(10, 8, 10, 6),
+                MinimumSize = new Size(0, 52)
             };
 
             var flow = new FlowLayoutPanel
@@ -120,7 +131,7 @@ namespace DocExtractor.UI.Controls
                 Text      = "快速上手：",
                 Font      = NlpLabTheme.BodyBold,
                 ForeColor = NlpLabTheme.Primary,
-                Margin    = new Padding(0, 6, 6, 0)
+                Margin    = new Padding(0, 2, 8, 0)
             });
             flow.Controls.Add(new Label
             {
@@ -128,7 +139,7 @@ namespace DocExtractor.UI.Controls
                 Text      = "1) 输入或粘贴文本",
                 Font      = NlpLabTheme.Small,
                 ForeColor = NlpLabTheme.TextSecondary,
-                Margin    = new Padding(0, 6, 12, 0)
+                Margin    = new Padding(0, 2, 14, 0)
             });
             flow.Controls.Add(new Label
             {
@@ -136,7 +147,7 @@ namespace DocExtractor.UI.Controls
                 Text      = "2) 点击“提取实体”并修正实体",
                 Font      = NlpLabTheme.Small,
                 ForeColor = NlpLabTheme.TextSecondary,
-                Margin    = new Padding(0, 6, 12, 0)
+                Margin    = new Padding(0, 2, 14, 0)
             });
             flow.Controls.Add(new Label
             {
@@ -144,7 +155,7 @@ namespace DocExtractor.UI.Controls
                 Text      = "3) 点击“提交校正”加入训练样本",
                 Font      = NlpLabTheme.Small,
                 ForeColor = NlpLabTheme.TextSecondary,
-                Margin    = new Padding(0, 6, 0, 0)
+                Margin    = new Padding(0, 2, 0, 0)
             });
 
             bar.Controls.Add(flow);
@@ -156,7 +167,7 @@ namespace DocExtractor.UI.Controls
             var panel = new Panel
             {
                 Dock        = DockStyle.Fill,
-                Padding     = new Padding(0, 0, 4, 0),
+                Padding     = new Padding(0, 2, 4, 0),
                 MinimumSize = new Size(320, 220)
             };
 
@@ -168,6 +179,17 @@ namespace DocExtractor.UI.Controls
                 Font      = NlpLabTheme.SectionTitle,
                 ForeColor = NlpLabTheme.TextPrimary,
                 TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            var guide = new Label
+            {
+                Text      = "提示：先输入文本，再点击“提取实体”；可直接框选文字后点“标记选中文本”。",
+                Dock      = DockStyle.Top,
+                Height    = 28,
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextTertiary,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding   = new Padding(0, 2, 0, 0)
             };
 
             _inputBox = new RichTextBox
@@ -244,6 +266,7 @@ namespace DocExtractor.UI.Controls
 
             panel.Controls.Add(_inputBox);
             panel.Controls.Add(btnPanel);
+            panel.Controls.Add(guide);
             panel.Controls.Add(title);
             return panel;
         }
