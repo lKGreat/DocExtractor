@@ -54,6 +54,14 @@ namespace DocExtractor.Core.Protocol
             @"分辨率[：:\s]*\d+[；;]?\s*(?:范围)?[^单]*?单位[：:\s]*([\w°℃%]+)",
             RegexOptions.Compiled);
 
+        private static readonly Regex HighNibbleNameRx = new Regex(
+            @"高\s*(?:四位|4位)\s*(?:是|为|:|：)\s*([^，,;；。\r\n]+)",
+            RegexOptions.Compiled);
+
+        private static readonly Regex LowNibbleNameRx = new Regex(
+            @"低\s*(?:四位|4位)\s*(?:是|为|:|：)\s*([^，,;；。\r\n]+)",
+            RegexOptions.Compiled);
+
         /// <summary>
         /// Parse all data rows from a telemetry definition table into fields.
         /// </summary>
@@ -102,14 +110,26 @@ namespace DocExtractor.Core.Protocol
                 if (string.IsNullOrEmpty(field.ByteSequence) && !string.IsNullOrEmpty(lastByteSeq))
                     field.ByteSequence = lastByteSeq;
 
-                // If table provides bit offset in a separate column (common for WDxx rows),
-                // treat the "length" column as bit-length and convert to a bit-field.
-                TryApplyBitFieldFromColumns(field, startBitStr);
-
                 ExtractUnit(remarks, name, field);
                 ExtractEnum(remarks, field);
                 ExtractDataType(remarks, field);
                 ClassifySpecialFields(byteSeq, name, field);
+
+                if (TrySplitPackedNibbleField(field, startBitStr, out var highNibble, out var lowNibble))
+                {
+                    // Replace the original 1-byte packed field with two WD bit-fields
+                    if (!ContainsSameBitField(fields, highNibble)) fields.Add(highNibble);
+                    if (!ContainsSameBitField(fields, lowNibble)) fields.Add(lowNibble);
+                    continue;
+                }
+
+                // If table provides bit offset in a separate column, treat the "length" column as bit-length
+                // and convert Wxx/WDxx into a WD bit-field.
+                TryApplyBitFieldFromColumns(field, startBitStr);
+
+                // Avoid duplicate bit-fields if the source table repeats the same bit extraction row.
+                if (field.BitLength > 0 && ContainsSameBitField(fields, field))
+                    continue;
 
                 if (string.IsNullOrEmpty(field.FieldName) && field.BitLength == 0
                     && fields.Count > 0 && !hasExplicitByteSeq)
@@ -132,12 +152,117 @@ namespace DocExtractor.Core.Protocol
             return fields;
         }
 
+        private bool TrySplitPackedNibbleField(
+            ProtocolTelemetryField field,
+            string startBitStr,
+            out ProtocolTelemetryField highNibble,
+            out ProtocolTelemetryField lowNibble)
+        {
+            highNibble = new ProtocolTelemetryField();
+            lowNibble = new ProtocolTelemetryField();
+
+            if (field == null) return false;
+            if (field.IsHeaderField || field.IsChecksum) return false;
+            if (field.BitLength > 0) return false;
+            if (string.IsNullOrEmpty(field.ByteSequence)) return false;
+            if (!field.ByteSequence.StartsWith("W", StringComparison.OrdinalIgnoreCase)
+                && !field.ByteSequence.StartsWith("WD", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            int startBit = -1;
+            int.TryParse(startBitStr ?? "", out startBit);
+
+            // Trigger A (preferred): remarks explicitly describe high/low nibble
+            string remarks = field.Remarks ?? "";
+            var hi = ExtractNibbleName(remarks, HighNibbleNameRx);
+            var lo = ExtractNibbleName(remarks, LowNibbleNameRx);
+            bool remarkSuggestsNibbleSplit = !string.IsNullOrEmpty(remarks)
+                && HighNibbleNameRx.IsMatch(remarks)
+                && LowNibbleNameRx.IsMatch(remarks);
+
+            // Trigger B (fallback): table already provides startBit/bitLen = (4,4) and name contains '/'
+            // but doesn't provide the paired low nibble row.
+            bool slashNameSuggestsNibbleSplit = !remarkSuggestsNibbleSplit
+                && startBit == 4
+                && field.ByteLength == 4
+                && !string.IsNullOrEmpty(field.FieldName)
+                && (field.FieldName.Contains("/") || field.FieldName.Contains("／"));
+
+            if (!remarkSuggestsNibbleSplit && !slashNameSuggestsNibbleSplit)
+                return false;
+
+            // Prefer remark-extracted names; fallback to splitting FieldName if needed.
+            if ((string.IsNullOrEmpty(hi) || string.IsNullOrEmpty(lo)) && !string.IsNullOrEmpty(field.FieldName))
+            {
+                var parts = field.FieldName.Split(new[] { '/', '／' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(p => p.Trim()).ToArray();
+                if (parts.Length >= 2)
+                {
+                    hi = string.IsNullOrEmpty(hi) ? parts[0] : hi;
+                    lo = string.IsNullOrEmpty(lo) ? parts[1] : lo;
+                }
+            }
+
+            if (string.IsNullOrEmpty(hi) || string.IsNullOrEmpty(lo))
+                return false;
+
+            int byteIndex;
+            if (!TryGetByteIndex(field.ByteSequence, out byteIndex)) return false;
+
+            string wdSeq = "WD" + byteIndex;
+
+            highNibble = new ProtocolTelemetryField
+            {
+                ByteSequence = wdSeq,
+                FieldName = "b7-b4:" + hi,
+                BitOffset = 4,
+                BitLength = 4,
+                ByteLength = 0,
+                Remarks = field.Remarks,
+                Unit = field.Unit,
+                EnumMapping = field.EnumMapping,
+                DataTypeHint = field.DataTypeHint
+            };
+
+            lowNibble = new ProtocolTelemetryField
+            {
+                ByteSequence = wdSeq,
+                FieldName = "b3-b0:" + lo,
+                BitOffset = 0,
+                BitLength = 4,
+                ByteLength = 0,
+                Remarks = field.Remarks,
+                Unit = field.Unit,
+                EnumMapping = field.EnumMapping,
+                DataTypeHint = field.DataTypeHint
+            };
+
+            return true;
+        }
+
+        private static bool ContainsSameBitField(List<ProtocolTelemetryField> fields, ProtocolTelemetryField field)
+        {
+            if (fields == null || field == null) return false;
+            if (field.BitLength <= 0) return false;
+            return fields.Any(f =>
+                f.BitLength == field.BitLength &&
+                f.BitOffset == field.BitOffset &&
+                string.Equals(f.ByteSequence ?? "", field.ByteSequence ?? "", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string ExtractNibbleName(string remarks, Regex rx)
+        {
+            if (string.IsNullOrEmpty(remarks)) return "";
+            var m = rx.Match(remarks);
+            if (!m.Success) return "";
+            return (m.Groups[1].Value ?? "").Trim();
+        }
+
         private void TryApplyBitFieldFromColumns(ProtocolTelemetryField field, string startBitStr)
         {
             if (field == null) return;
             if (string.IsNullOrEmpty(startBitStr)) return;
             if (string.IsNullOrEmpty(field.ByteSequence)) return;
-            if (!field.ByteSequence.StartsWith("WD", StringComparison.OrdinalIgnoreCase)) return;
             if (field.BitLength > 0) { field.ByteLength = 0; return; }
 
             int startBit;
@@ -148,6 +273,15 @@ namespace DocExtractor.Core.Protocol
             field.BitOffset = startBit;
             field.BitLength = bitLen;
             field.ByteLength = 0;
+
+            // Allow Wxx rows with a separate start-bit column to be treated as WDxx bit fields.
+            if (field.ByteSequence.StartsWith("W", StringComparison.OrdinalIgnoreCase)
+                && !field.ByteSequence.StartsWith("WD", StringComparison.OrdinalIgnoreCase))
+            {
+                int byteIndex;
+                if (TryGetByteIndex(field.ByteSequence, out byteIndex))
+                    field.ByteSequence = "WD" + byteIndex;
+            }
 
             // Normalize display name to match expected style (b7-b4:xxx / b3:xxx)
             if (!LooksLikeBitPrefixedName(field.FieldName))
