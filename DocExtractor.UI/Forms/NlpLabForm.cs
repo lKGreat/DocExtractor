@@ -37,11 +37,13 @@ namespace DocExtractor.UI.Forms
         private Panel   _tabBar        = null!;
         private Button  _tabAnalysis   = null!;
         private Button  _tabLearning   = null!;
+        private Button  _tabTrainingCenter = null!;
         private Button  _tabDashboard  = null!;
         private Panel   _contentPanel  = null!;
 
         private NlpUnifiedAnnotationPanel? _analysisPanel;
         private NlpActiveLearningPanel?  _learningPanel;
+        private NlpTrainingCenterPanel? _trainingCenterPanel;
         private NlpQualityDashboardPanel? _dashboardPanel;
         private Control? _activeControl;
 
@@ -199,13 +201,15 @@ namespace DocExtractor.UI.Forms
 
             _tabAnalysis  = CreateTabButton("文本分析");
             _tabLearning  = CreateTabButton("主动学习");
+            _tabTrainingCenter = CreateTabButton("训练中心");
             _tabDashboard = CreateTabButton("质量仪表盘");
 
             _tabAnalysis.Click  += (s, e) => ShowPage(0);
             _tabLearning.Click  += (s, e) => ShowPage(1);
-            _tabDashboard.Click += (s, e) => ShowPage(2);
+            _tabTrainingCenter.Click += (s, e) => ShowPage(2);
+            _tabDashboard.Click += (s, e) => ShowPage(3);
 
-            tabFlow.Controls.AddRange(new Control[] { _tabAnalysis, _tabLearning, _tabDashboard });
+            tabFlow.Controls.AddRange(new Control[] { _tabAnalysis, _tabLearning, _tabTrainingCenter, _tabDashboard });
 
             // separator line at the bottom
             var separator = new Panel
@@ -318,12 +322,14 @@ namespace DocExtractor.UI.Forms
 
             DisposePanel(ref _analysisPanel);
             DisposePanel(ref _learningPanel);
+            DisposePanel(ref _trainingCenterPanel);
             DisposePanel(ref _dashboardPanel);
 
             int page = GetActivePage();
             ShowPage(page, force: true);
 
             UpdateStatus($"已切换到场景：{_activeScenario.Name}（{_activeScenario.EntityTypes.Count} 种实体类型）");
+            RefreshModelStatus();
         }
 
         private static void DisposePanel<T>(ref T? panel) where T : Control
@@ -405,7 +411,8 @@ namespace DocExtractor.UI.Forms
             {
                 0 => GetAnalysisPanel(),
                 1 => GetLearningPanel(),
-                2 => GetDashboardPanel(),
+                2 => GetTrainingCenterPanel(),
+                3 => GetDashboardPanel(),
                 _ => GetAnalysisPanel()
             };
 
@@ -417,14 +424,16 @@ namespace DocExtractor.UI.Forms
             _activeControl = pageControl;
 
             if (page == 1) _learningPanel?.OnActivated();
-            if (page == 2) _dashboardPanel?.OnActivated();
+            if (page == 2) _trainingCenterPanel?.OnActivated();
+            if (page == 3) _dashboardPanel?.OnActivated();
         }
 
         private int GetActivePage()
         {
             if (_activeControl == _analysisPanel)  return 0;
             if (_activeControl == _learningPanel)  return 1;
-            if (_activeControl == _dashboardPanel) return 2;
+            if (_activeControl == _trainingCenterPanel) return 2;
+            if (_activeControl == _dashboardPanel) return 3;
             return 0;
         }
 
@@ -437,6 +446,19 @@ namespace DocExtractor.UI.Forms
                 {
                     UpdateStatus($"已提交标注，当前场景共 {_engine.GetVerifiedCount(_activeScenario!.Id)} 条样本");
                 };
+                _analysisPanel.QuickTrainRequested += () =>
+                {
+                    if (_activeScenario == null) return;
+                    var center = GetTrainingCenterPanel();
+                    if (!center.CanStartTraining)
+                    {
+                        MessageBox.Show(center.TrainingReadinessMessage, "无法快速训练", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+                    ShowPage(2);
+                    center.TriggerTraining();
+                };
+                _analysisPanel.OpenTrainingCenterRequested += () => ShowPage(2);
             }
             return _analysisPanel;
         }
@@ -448,11 +470,38 @@ namespace DocExtractor.UI.Forms
                 _learningPanel = new NlpActiveLearningPanel(_engine, _activeScenario!);
                 _learningPanel.TrainingCompleted += () =>
                 {
-                    UpdateStatus("训练完成，模型已更新");
                     _dashboardPanel?.OnActivated();
+                    RefreshModelStatus();
+                };
+                _learningPanel.TrainingCompletedDetailed += result =>
+                {
+                    UpdateStatus(result.ModelApplied
+                        ? "训练完成，已加载最新模型"
+                        : "训练完成，新模型未优于当前，未应用");
+                    _dashboardPanel?.OnActivated();
+                    _trainingCenterPanel?.OnActivated();
+                    RefreshModelStatus();
                 };
             }
             return _learningPanel;
+        }
+
+        private NlpTrainingCenterPanel GetTrainingCenterPanel()
+        {
+            if (_trainingCenterPanel == null)
+            {
+                _trainingCenterPanel = new NlpTrainingCenterPanel(_engine, _activeScenario!);
+                _trainingCenterPanel.TrainingCompletedDetailed += result =>
+                {
+                    UpdateStatus(result.ModelApplied
+                        ? "训练完成，已加载最新模型"
+                        : "训练完成，新模型未优于当前，未应用");
+                    _learningPanel?.OnActivated();
+                    _dashboardPanel?.OnActivated();
+                    RefreshModelStatus();
+                };
+            }
+            return _trainingCenterPanel;
         }
 
         private NlpQualityDashboardPanel GetDashboardPanel()
@@ -464,7 +513,7 @@ namespace DocExtractor.UI.Forms
 
         private void HighlightTab(int page)
         {
-            var tabs = new[] { _tabAnalysis, _tabLearning, _tabDashboard };
+            var tabs = new[] { _tabAnalysis, _tabLearning, _tabTrainingCenter, _tabDashboard };
             for (int i = 0; i < tabs.Length; i++)
             {
                 bool active = i == page;
@@ -485,10 +534,32 @@ namespace DocExtractor.UI.Forms
             }
         }
 
+        private void RefreshModelStatus()
+        {
+            string currentTag = _engine.GetCurrentModelTag();
+            var latestApplied = _activeScenario == null
+                ? null
+                : _engine.GetLatestAppliedLearningSession(_activeScenario.Id);
+            bool latestLoaded = latestApplied != null &&
+                string.Equals(currentTag, latestApplied.ModelTag, StringComparison.OrdinalIgnoreCase);
+
+            _modelStatusLabel.Text = latestApplied == null
+                ? (_nerModel.IsLoaded ? "● 模型已加载" : "○ 模型未加载")
+                : latestLoaded ? "● 最新模型已就绪" : "○ 未加载最新模型";
+            _modelStatusLabel.ForeColor = latestApplied == null
+                ? (_nerModel.IsLoaded ? Color.FromArgb(82, 196, 26) : Color.DarkOrange)
+                : latestLoaded ? Color.FromArgb(82, 196, 26) : NlpLabTheme.Danger;
+            _modelStatusLabel.BackColor = latestApplied == null
+                ? NlpLabTheme.BgStatusBar
+                : latestLoaded ? Color.FromArgb(232, 250, 233) : Color.FromArgb(255, 241, 240);
+            _modelStatusLabel.Width = 200;
+        }
+
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
             ShowPage(0);
+            RefreshModelStatus();
         }
     }
 

@@ -28,6 +28,7 @@ namespace DocExtractor.UI.Controls
         private DataGridView _perTypeGrid    = null!;
         private DataGridView _generalizationGrid = null!;
         private Label _generalizationNote    = null!;
+        private Label _freshnessLabel        = null!;
 
         public NlpQualityDashboardPanel(ActiveLearningEngine engine, ScenarioManager scenarioMgr, NlpScenario scenario)
         {
@@ -85,8 +86,19 @@ namespace DocExtractor.UI.Controls
                 TextAlign = ContentAlignment.MiddleLeft,
                 Padding   = new Padding(12, 0, 0, 0)
             };
+            _freshnessLabel = new Label
+            {
+                Text      = "模型状态：—",
+                Dock      = DockStyle.Right,
+                Width     = 220,
+                Height    = 36,
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextTertiary,
+                TextAlign = ContentAlignment.MiddleRight
+            };
 
             toolbar.Controls.Add(_refreshBtn);
+            toolbar.Controls.Add(_freshnessLabel);
             toolbar.Controls.Add(_summaryLabel);
             toolbar.Controls.Add(title);
 
@@ -149,6 +161,8 @@ namespace DocExtractor.UI.Controls
             _sessionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "F1Before",  HeaderText = "训前F1", FillWeight = 18 });
             _sessionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "F1After",   HeaderText = "训后F1", FillWeight = 18 });
             _sessionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Improved",  HeaderText = "提升",   FillWeight = 14 });
+            _sessionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Applied",   HeaderText = "已应用", FillWeight = 12 });
+            _sessionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Latest",    HeaderText = "最新加载", FillWeight = 12 });
             _sessionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Samples",   HeaderText = "样本",   FillWeight = 14 });
             _sessionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Duration",  HeaderText = "耗时",   FillWeight = 14 });
             _sessionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Date",      HeaderText = "时间",   FillWeight = 14 });
@@ -243,12 +257,24 @@ namespace DocExtractor.UI.Controls
                 : metrics.F1 >= 0.80
                     ? Color.DarkOrange
                     : NlpLabTheme.Danger;
+
+            var latestApplied = _engine.GetLatestAppliedLearningSession(_scenario.Id);
+            string currentTag = _engine.GetCurrentModelTag();
+            bool isLatestLoaded = latestApplied != null &&
+                string.Equals(currentTag, latestApplied.ModelTag, StringComparison.OrdinalIgnoreCase);
+            _freshnessLabel.Text = latestApplied == null
+                ? "模型状态：无应用记录"
+                : isLatestLoaded ? "模型状态：已加载最新" : "模型状态：未加载最新";
+            _freshnessLabel.ForeColor = latestApplied == null
+                ? Color.DarkOrange
+                : isLatestLoaded ? Color.FromArgb(82, 196, 26) : NlpLabTheme.Danger;
         }
 
         private void RefreshSessionHistory()
         {
             _sessionGrid.Rows.Clear();
             var sessions = _engine.GetLearningSessions(_scenario.Id);
+            string currentTag = _engine.GetCurrentModelTag();
 
             _trendChart.SetData(sessions);
 
@@ -259,6 +285,9 @@ namespace DocExtractor.UI.Controls
                 var mAfter  = TryDeserialize(s.MetricsAfterJson);
 
                 string improved = s.IsImproved ? "↑ 提升" : "→ 持平/降";
+                string applied = s.ModelApplied ? "是" : "否";
+                bool latestLoaded = s.ModelApplied &&
+                    string.Equals(s.ModelTag, currentTag, StringComparison.OrdinalIgnoreCase);
                 string date = s.TrainedAt.Length >= 16 ? s.TrainedAt.Substring(0, 16) : s.TrainedAt;
 
                 var row = _sessionGrid.Rows.Add(
@@ -266,12 +295,14 @@ namespace DocExtractor.UI.Controls
                     mBefore != null ? $"{mBefore.F1:P2}" : "—",
                     mAfter  != null ? $"{mAfter.F1:P2}"  : "—",
                     improved,
+                    applied,
+                    latestLoaded ? "是" : "否",
                     s.SampleCountAfter,
                     $"{s.DurationSeconds:F0}s",
                     date);
 
                 _sessionGrid.Rows[row].DefaultCellStyle.ForeColor =
-                    s.IsImproved ? Color.FromArgb(82, 196, 26) : Color.DarkOrange;
+                    s.ModelApplied ? Color.FromArgb(82, 196, 26) : Color.DarkOrange;
             }
         }
 

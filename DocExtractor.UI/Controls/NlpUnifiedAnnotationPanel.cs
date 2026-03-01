@@ -19,12 +19,17 @@ namespace DocExtractor.UI.Controls
 
         private ComboBox _modeCombo = null!;
         private Label _templateInfo = null!;
+        private Label _trainHint = null!;
+        private Button _quickTrainBtn = null!;
+        private Button _openTrainingCenterBtn = null!;
         private Panel _editorHost = null!;
 
         private NlpTextAnalysisPanel? _spanPanel;
         private readonly Dictionary<AnnotationMode, StructuredModeEditor> _structuredEditors = new Dictionary<AnnotationMode, StructuredModeEditor>();
 
         public event Action? AnnotationSubmitted;
+        public event Action? QuickTrainRequested;
+        public event Action? OpenTrainingCenterRequested;
 
         public NlpUnifiedAnnotationPanel(ActiveLearningEngine engine, NlpScenario scenario)
         {
@@ -79,6 +84,29 @@ namespace DocExtractor.UI.Controls
                 ForeColor = NlpLabTheme.TextTertiary,
                 Padding = new Padding(12, 0, 0, 0)
             };
+            _trainHint = new Label
+            {
+                Dock = DockStyle.Right,
+                Width = 240,
+                TextAlign = ContentAlignment.MiddleRight,
+                ForeColor = NlpLabTheme.TextTertiary
+            };
+            _quickTrainBtn = NlpLabTheme.MakePrimary(new Button
+            {
+                Text = "快速训练",
+                Width = 90,
+                Height = 28,
+                Dock = DockStyle.Right
+            });
+            _quickTrainBtn.Click += (s, e) => QuickTrainRequested?.Invoke();
+            _openTrainingCenterBtn = NlpLabTheme.MakeDefault(new Button
+            {
+                Text = "训练中心",
+                Width = 90,
+                Height = 28,
+                Dock = DockStyle.Right
+            });
+            _openTrainingCenterBtn.Click += (s, e) => OpenTrainingCenterRequested?.Invoke();
 
             var flow = new FlowLayoutPanel
             {
@@ -88,6 +116,9 @@ namespace DocExtractor.UI.Controls
             };
             flow.Controls.Add(modeLabel);
             flow.Controls.Add(_modeCombo);
+            topBar.Controls.Add(_trainHint);
+            topBar.Controls.Add(_quickTrainBtn);
+            topBar.Controls.Add(_openTrainingCenterBtn);
             topBar.Controls.Add(_templateInfo);
             topBar.Controls.Add(flow);
 
@@ -108,11 +139,24 @@ namespace DocExtractor.UI.Controls
                 _modeCombo.Items.Add(new ModeItem(mode));
 
             _templateInfo.Text = $"模板配置：{GetTemplateName(_scenario.TemplateConfigJson)}";
+            UpdateTrainingReadiness();
 
             if (_modeCombo.Items.Count > 0)
                 _modeCombo.SelectedIndex = 0;
             else
                 RenderEditor(null);
+        }
+
+        private void UpdateTrainingReadiness()
+        {
+            int verified = _engine.GetVerifiedCount(_scenario.Id);
+            int min = _engine.MinSamplesForTraining;
+            bool ready = verified >= min;
+            _quickTrainBtn.Enabled = ready;
+            _trainHint.Text = ready
+                ? $"训练就绪（{verified}/{min}）"
+                : $"还需样本（{verified}/{min}）";
+            _trainHint.ForeColor = ready ? Color.FromArgb(82, 196, 26) : Color.DarkOrange;
         }
 
         private void SwitchMode()
@@ -138,7 +182,11 @@ namespace DocExtractor.UI.Controls
         private NlpTextAnalysisPanel CreateSpanPanel()
         {
             var panel = new NlpTextAnalysisPanel(_engine, _scenario);
-            panel.AnnotationSubmitted += () => AnnotationSubmitted?.Invoke();
+            panel.AnnotationSubmitted += () =>
+            {
+                UpdateTrainingReadiness();
+                AnnotationSubmitted?.Invoke();
+            };
             return panel;
         }
 
@@ -148,7 +196,11 @@ namespace DocExtractor.UI.Controls
                 return existing;
 
             var editor = new StructuredModeEditor(_engine, _scenario, mode);
-            editor.AnnotationSubmitted += () => AnnotationSubmitted?.Invoke();
+            editor.AnnotationSubmitted += () =>
+            {
+                UpdateTrainingReadiness();
+                AnnotationSubmitted?.Invoke();
+            };
             _structuredEditors[mode] = editor;
             return editor;
         }

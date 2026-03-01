@@ -66,6 +66,10 @@ namespace DocExtractor.Data.Repositories
         public string TrainedAt { get; set; } = string.Empty;
         public double DurationSeconds { get; set; }
         public bool IsImproved { get; set; }
+        public bool PassedComparison { get; set; }
+        public bool ModelApplied { get; set; }
+        public string AppliedAt { get; set; } = string.Empty;
+        public string ModelTag { get; set; } = string.Empty;
     }
 
     /// <summary>质量指标快照</summary>
@@ -152,7 +156,11 @@ CREATE TABLE IF NOT EXISTS NlpLearningSession (
     MetricsAfterJson    TEXT    NOT NULL DEFAULT '{}',
     TrainedAt           TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
     DurationSeconds     REAL    NOT NULL DEFAULT 0,
-    IsImproved          INTEGER NOT NULL DEFAULT 0
+    IsImproved          INTEGER NOT NULL DEFAULT 0,
+    PassedComparison    INTEGER NOT NULL DEFAULT 0,
+    ModelApplied        INTEGER NOT NULL DEFAULT 0,
+    AppliedAt           TEXT    NULL,
+    ModelTag            TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
@@ -176,6 +184,10 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
             TryAddColumn("NlpScenario", "TemplateConfigJson", "TEXT NOT NULL DEFAULT '{}'");
             TryAddColumn("NlpAnnotatedText", "AnnotationMode", "TEXT NOT NULL DEFAULT 'SpanEntity'");
             TryAddColumn("NlpAnnotatedText", "StructuredAnnotationsJson", "TEXT NOT NULL DEFAULT '{}'");
+            TryAddColumn("NlpLearningSession", "PassedComparison", "INTEGER NOT NULL DEFAULT 0");
+            TryAddColumn("NlpLearningSession", "ModelApplied", "INTEGER NOT NULL DEFAULT 0");
+            TryAddColumn("NlpLearningSession", "AppliedAt", "TEXT NULL");
+            TryAddColumn("NlpLearningSession", "ModelTag", "TEXT NOT NULL DEFAULT ''");
             TryAddColumn("NlpUncertainQueue", "IsSkipped", "INTEGER NOT NULL DEFAULT 0");
             TryAddColumn("NlpUncertainQueue", "SkipReason", "TEXT NOT NULL DEFAULT ''");
             TryAddColumn("NlpUncertainQueue", "ReviewedAt", "TEXT NULL");
@@ -344,8 +356,8 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
         public void SaveLearningSession(NlpLearningSession session)
         {
             using var cmd = new SQLiteCommand(
-                "INSERT INTO NlpLearningSession (ScenarioId, SampleCountBefore, SampleCountAfter, MetricsBeforeJson, MetricsAfterJson, DurationSeconds, IsImproved) " +
-                "VALUES (@sid,@sb,@sa,@mb,@ma,@d,@imp)",
+                "INSERT INTO NlpLearningSession (ScenarioId, SampleCountBefore, SampleCountAfter, MetricsBeforeJson, MetricsAfterJson, DurationSeconds, IsImproved, PassedComparison, ModelApplied, AppliedAt, ModelTag) " +
+                "VALUES (@sid,@sb,@sa,@mb,@ma,@d,@imp,@pc,@applied,@appliedAt,@tag)",
                 _conn);
             cmd.Parameters.AddWithValue("@sid", session.ScenarioId);
             cmd.Parameters.AddWithValue("@sb", session.SampleCountBefore);
@@ -354,13 +366,17 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
             cmd.Parameters.AddWithValue("@ma", session.MetricsAfterJson);
             cmd.Parameters.AddWithValue("@d", session.DurationSeconds);
             cmd.Parameters.AddWithValue("@imp", session.IsImproved ? 1 : 0);
+            cmd.Parameters.AddWithValue("@pc", session.PassedComparison ? 1 : 0);
+            cmd.Parameters.AddWithValue("@applied", session.ModelApplied ? 1 : 0);
+            cmd.Parameters.AddWithValue("@appliedAt", string.IsNullOrWhiteSpace(session.AppliedAt) ? (object)DBNull.Value : session.AppliedAt);
+            cmd.Parameters.AddWithValue("@tag", session.ModelTag ?? string.Empty);
             cmd.ExecuteNonQuery();
         }
 
         public List<NlpLearningSession> GetLearningSessions(int scenarioId)
         {
             using var cmd = new SQLiteCommand(
-                "SELECT Id, ScenarioId, SampleCountBefore, SampleCountAfter, MetricsBeforeJson, MetricsAfterJson, TrainedAt, DurationSeconds, IsImproved " +
+                "SELECT Id, ScenarioId, SampleCountBefore, SampleCountAfter, MetricsBeforeJson, MetricsAfterJson, TrainedAt, DurationSeconds, IsImproved, PassedComparison, ModelApplied, AppliedAt, ModelTag " +
                 "FROM NlpLearningSession WHERE ScenarioId=@s ORDER BY Id ASC",
                 _conn);
             cmd.Parameters.AddWithValue("@s", scenarioId);
@@ -378,7 +394,11 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
                     MetricsAfterJson = r.GetString(5),
                     TrainedAt = r.GetString(6),
                     DurationSeconds = r.GetDouble(7),
-                    IsImproved = r.GetInt32(8) == 1
+                    IsImproved = r.GetInt32(8) == 1,
+                    PassedComparison = r.IsDBNull(9) ? false : r.GetInt32(9) == 1,
+                    ModelApplied = r.IsDBNull(10) ? false : r.GetInt32(10) == 1,
+                    AppliedAt = r.IsDBNull(11) ? "" : r.GetString(11),
+                    ModelTag = r.IsDBNull(12) ? "" : r.GetString(12)
                 });
             }
             return result;

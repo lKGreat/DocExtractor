@@ -22,6 +22,7 @@ namespace DocExtractor.UI.Controls
         private CancellationTokenSource? _trainCts;
 
         public event Action? TrainingCompleted;
+        public event Action<LearningSessionResult>? TrainingCompletedDetailed;
 
         // ── 控件字段 ─────────────────────────────────────────────────────────
         private Label _statsLabel         = null!;
@@ -61,6 +62,27 @@ namespace DocExtractor.UI.Controls
         {
             RefreshStats();
             LoadQueue();
+        }
+
+        public bool CanStartTraining => _engine.GetVerifiedCount(_scenario.Id) >= _engine.MinSamplesForTraining;
+
+        public string TrainingReadinessMessage
+        {
+            get
+            {
+                int verified = _engine.GetVerifiedCount(_scenario.Id);
+                if (verified >= _engine.MinSamplesForTraining)
+                    return $"可训练：当前已标注 {verified} 条。";
+                return $"样本不足：还需 {_engine.MinSamplesForTraining - verified} 条。";
+            }
+        }
+
+        public void TriggerTraining(int presetIndex = 1)
+        {
+            if (_trainBtn.Enabled == false) return;
+            if (presetIndex < 0 || presetIndex >= _presetCombo.Items.Count) presetIndex = 1;
+            _presetCombo.SelectedIndex = presetIndex;
+            OnTrain(this, EventArgs.Empty);
         }
 
         // ── 布局 ──────────────────────────────────────────────────────────────
@@ -585,14 +607,14 @@ namespace DocExtractor.UI.Controls
                         AppendLog($"  Precision: {result.MetricsBefore.Precision:P2} → {result.MetricsAfter.Precision:P2}");
                         AppendLog($"  Recall:    {result.MetricsBefore.Recall:P2} → {result.MetricsAfter.Recall:P2}");
 
-                        _trainStatusLabel.Text      = result.PassedQualityGate
-                            ? "训练成功并通过质量门控，模型已更新"
-                            : "训练完成但未通过质量门控，已回滚";
-                        _trainStatusLabel.ForeColor = result.PassedQualityGate
+                        _trainStatusLabel.Text      = result.ModelApplied
+                            ? "训练成功，已加载最新模型"
+                            : "训练完成，但新模型未优于当前模型，未应用";
+                        _trainStatusLabel.ForeColor = result.ModelApplied
                             ? Color.FromArgb(82, 196, 26)
                             : Color.DarkOrange;
 
-                        if (result.MetricsAfter.F1 >= 0.95)
+                        if (result.ReachedTarget)
                             AppendLog("F1 >= 95%，模型已达到目标质量！");
                     }
 
@@ -601,6 +623,7 @@ namespace DocExtractor.UI.Controls
 
                     RefreshStats();
                     TrainingCompleted?.Invoke();
+                    TrainingCompletedDetailed?.Invoke(result);
                 }));
             }
             catch (OperationCanceledException)

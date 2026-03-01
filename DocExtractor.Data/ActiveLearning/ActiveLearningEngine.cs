@@ -28,11 +28,11 @@ namespace DocExtractor.Data.ActiveLearning
         /// <summary>每次新增多少条样本后建议训练</summary>
         public int TrainTriggerBatchSize { get; set; } = 20;
 
-        /// <summary>质量门控目标：测试集 F1 必须达到该阈值</summary>
+        /// <summary>质量告警目标：用于提示，不阻断替换</summary>
         public double QualityGateTargetF1 { get; set; } = 0.95;
 
-        /// <summary>质量门控增益：测试集 F1 相对基线至少提升该值</summary>
-        public double QualityGateMinDelta { get; set; } = 0.005;
+        /// <summary>最小提升阈值：新模型相对当前模型至少提升该值才应用</summary>
+        public double QualityGateMinDelta { get; set; } = 0.0;
 
         public ActiveLearningEngine(string dbPath, string modelsDir, NerModel nerModel)
         {
@@ -248,27 +248,39 @@ namespace DocExtractor.Data.ActiveLearning
                 var metricsAfter = _evaluator.EvaluateAll(testSamples, predictor);
                 result.MetricsAfter = metricsAfter;
 
-                bool improved = metricsAfter.F1 >= (metricsBefore.F1 + QualityGateMinDelta);
+                bool improved = metricsAfter.F1 > (metricsBefore.F1 + QualityGateMinDelta);
                 bool reachedTarget = metricsAfter.F1 >= QualityGateTargetF1;
-                bool passedGate = improved && reachedTarget;
+                bool modelApplied = false;
+                string appliedAt = string.Empty;
+                string modelTag = BuildModelTag();
 
                 result.IsImproved = improved;
-                result.PassedQualityGate = passedGate;
+                result.PassedComparison = improved;
+                result.ReachedTarget = reachedTarget;
 
-                if (passedGate)
+                if (improved)
                 {
                     string finalPath = Path.Combine(_modelsDir, "ner_model.zip");
                     if (File.Exists(finalPath)) File.Delete(finalPath);
                     File.Move(tempModelPath, finalPath);
                     _nerModel.Load(finalPath);
+                    modelApplied = true;
+                    appliedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                    modelTag = BuildModelTag();
                     result.Success = true;
-                    result.Message = $"训练成功并通过质量门控！F1: {metricsBefore.F1:P1} → {metricsAfter.F1:P1}";
+                    result.Message = reachedTarget
+                        ? $"训练成功并已应用新模型。F1: {metricsBefore.F1:P1} → {metricsAfter.F1:P1}（达到目标）"
+                        : $"训练成功并已应用新模型。F1: {metricsBefore.F1:P1} → {metricsAfter.F1:P1}（未达目标，仅提示）";
                 }
                 else
                 {
                     result.Success    = true;
-                    result.Message    = $"训练完成但未通过质量门控（目标 {QualityGateTargetF1:P0}，当前 {metricsAfter.F1:P1}），已回滚";
+                    result.Message    = $"训练完成但未优于当前模型（目标提示 {QualityGateTargetF1:P0}，当前 {metricsAfter.F1:P1}），未应用";
                 }
+
+                result.ModelApplied = modelApplied;
+                result.AppliedAt = appliedAt;
+                result.ModelTag = modelTag;
 
                 repo.SaveLearningSession(new NlpLearningSession
                 {
@@ -278,7 +290,11 @@ namespace DocExtractor.Data.ActiveLearning
                     MetricsBeforeJson = JsonConvert.SerializeObject(metricsBefore),
                     MetricsAfterJson  = JsonConvert.SerializeObject(metricsAfter),
                     DurationSeconds   = sw.Elapsed.TotalSeconds,
-                    IsImproved        = result.IsImproved
+                    IsImproved        = result.IsImproved,
+                    PassedComparison  = result.PassedComparison,
+                    ModelApplied      = result.ModelApplied,
+                    AppliedAt         = result.AppliedAt,
+                    ModelTag          = result.ModelTag
                 });
             }
             catch (OperationCanceledException)
@@ -346,6 +362,18 @@ namespace DocExtractor.Data.ActiveLearning
         {
             using var repo = new ActiveLearningRepository(_dbPath);
             return repo.GetLearningSessions(scenarioId);
+        }
+
+        public NlpLearningSession? GetLatestAppliedLearningSession(int scenarioId)
+        {
+            using var repo = new ActiveLearningRepository(_dbPath);
+            return repo.GetLearningSessions(scenarioId)
+                .LastOrDefault(s => s.ModelApplied);
+        }
+
+        public string GetCurrentModelTag()
+        {
+            return BuildModelTag();
         }
 
         // ── 工具方法 ─────────────────────────────────────────────────────────
@@ -426,6 +454,15 @@ namespace DocExtractor.Data.ActiveLearning
             try { if (File.Exists(path)) File.Delete(path); } catch { }
         }
 
+        private string BuildModelTag()
+        {
+            string finalPath = Path.Combine(_modelsDir, "ner_model.zip");
+            if (!File.Exists(finalPath))
+                return "ner_model.zip (missing)";
+            var fi = new FileInfo(finalPath);
+            return $"ner_model.zip@{fi.LastWriteTime:yyyy-MM-dd HH:mm:ss}";
+        }
+
         private sealed class HoldoutSplit
         {
             public List<NlpAnnotatedText> TrainSamples { get; set; } = new List<NlpAnnotatedText>();
@@ -450,7 +487,11 @@ namespace DocExtractor.Data.ActiveLearning
         public int SampleCount { get; set; }
         public bool Success { get; set; }
         public bool IsImproved { get; set; }
-        public bool PassedQualityGate { get; set; }
+        public bool PassedComparison { get; set; }
+        public bool ReachedTarget { get; set; }
+        public bool ModelApplied { get; set; }
+        public string AppliedAt { get; set; } = string.Empty;
+        public string ModelTag { get; set; } = string.Empty;
         public string Message { get; set; } = string.Empty;
         public NlpQualityMetrics? MetricsBefore { get; set; }
         public NlpQualityMetrics? MetricsAfter { get; set; }
