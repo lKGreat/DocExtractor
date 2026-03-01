@@ -20,5 +20,6 @@
     <ProjectReference Include="..\DocExtractor.Core\DocExtractor.Core.csproj" />
     <ProjectReference Include="..\DocExtractor.Data\DocExtractor.Data.csproj" />
     <ProjectReference Include="..\DocExtractor.ML\DocExtractor.ML.csproj" />
+    <ProjectReference Include="..\DocExtractor.Parsing\DocExtractor.Parsing.csproj" />
   </ItemGroup>
 </Project>

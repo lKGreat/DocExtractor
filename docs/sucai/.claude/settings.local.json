@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(file:*)",
+      "Bash(python:*)",
+      "Bash(unzip:*)",
+      "Bash(powershell:*)",
+      "Bash(dotnet:*)",
+      "Bash(ls:*)",
+      "Bash(xargs grep:*)",
+      "Bash(do:*)",
+      "Bash(/tmp/analyze_doc.ps1:*)"
+    ]
+  }
+}

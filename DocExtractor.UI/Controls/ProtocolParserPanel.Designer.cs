@@ -20,6 +20,7 @@ namespace DocExtractor.UI.Controls
             this._fileGroup = new GroupBox();
             this._fileLayout = new FlowLayoutPanel();
             this._filePathLabel = new Label();
+            this._templateTypeCombo = new ComboBox();
             this._browseBtn = new AntdUI.Button();
             this._analyzeBtn = new AntdUI.Button();
             this._settingsGroup = new GroupBox();
@@ -28,6 +29,7 @@ namespace DocExtractor.UI.Controls
             this._codePrefixInput = new AntdUI.Input();
             this._formulaTypeInput = new AntdUI.Input();
             this._formulaCoeffInput = new AntdUI.Input();
+            this._exportFormatCombo = new ComboBox();
             this._includeHeaderCheck = new CheckBox();
             this._includeChecksumCheck = new CheckBox();
             this._previewGroup = new GroupBox();
@@ -64,6 +66,11 @@ namespace DocExtractor.UI.Controls
             this._filePathLabel.AutoEllipsis = true;
             this._filePathLabel.ForeColor = Color.Gray;
 
+            this._templateTypeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+            this._templateTypeCombo.Items.AddRange(new object[] { "遥测模板", "遥控模板" });
+            this._templateTypeCombo.SelectedIndex = 0;
+            this._templateTypeCombo.Width = 100;
+
             this._browseBtn.Text = "选择文件";
             this._browseBtn.Size = new Size(100, 32);
 
@@ -74,7 +81,11 @@ namespace DocExtractor.UI.Controls
 
             this._fileLayout.Controls.AddRange(new Control[]
             {
-                this._filePathLabel, this._browseBtn, this._analyzeBtn
+                this._filePathLabel,
+                new Label { Text = "模板:", Width = 50, TextAlign = ContentAlignment.MiddleRight },
+                this._templateTypeCombo,
+                this._browseBtn,
+                this._analyzeBtn
             });
             this._fileGroup.Controls.Add(this._fileLayout);
 
@@ -109,6 +120,11 @@ namespace DocExtractor.UI.Controls
             this._formulaCoeffInput.Text = "1/0/";
             this._formulaCoeffInput.Dock = DockStyle.Fill;
 
+            this._exportFormatCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+            this._exportFormatCombo.Items.AddRange(new object[] { "格式A+B", "仅格式A", "仅格式B" });
+            this._exportFormatCombo.SelectedIndex = 0;
+            this._exportFormatCombo.Dock = DockStyle.Fill;
+
             this._includeHeaderCheck.Text = "含报头字段";
             this._includeHeaderCheck.AutoSize = true;
             this._includeHeaderCheck.Dock = DockStyle.Fill;
@@ -135,6 +151,9 @@ namespace DocExtractor.UI.Controls
             // Row 1
             this._settingsLayout.Controls.Add(this._includeHeaderCheck, 1, 1);
             this._settingsLayout.Controls.Add(this._includeChecksumCheck, 3, 1);
+            this._settingsLayout.Controls.Add(
+                new Label { Text = "导出格式:", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }, 4, 1);
+            this._settingsLayout.Controls.Add(this._exportFormatCombo, 5, 1);
 
             this._settingsGroup.Controls.Add(this._settingsLayout);
 
@@ -206,6 +225,7 @@ namespace DocExtractor.UI.Controls
         private GroupBox _fileGroup;
         private FlowLayoutPanel _fileLayout;
         private Label _filePathLabel;
+        private ComboBox _templateTypeCombo;
         private AntdUI.Button _browseBtn;
         private AntdUI.Button _analyzeBtn;
         private GroupBox _settingsGroup;
@@ -214,6 +234,7 @@ namespace DocExtractor.UI.Controls
         private AntdUI.Input _codePrefixInput;
         private AntdUI.Input _formulaTypeInput;
         private AntdUI.Input _formulaCoeffInput;
+        private ComboBox _exportFormatCombo;
         private CheckBox _includeHeaderCheck;
         private CheckBox _includeChecksumCheck;
         private GroupBox _previewGroup;

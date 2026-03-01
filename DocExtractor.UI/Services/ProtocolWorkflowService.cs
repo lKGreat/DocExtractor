@@ -17,6 +17,7 @@ namespace DocExtractor.UI.Services
     internal class ProtocolWorkflowService
     {
         private readonly TelemetryConfigExporter _exporter = new TelemetryConfigExporter();
+        private readonly TelecommandConfigExporter _telecommandExporter = new TelecommandConfigExporter();
 
         /// <summary>
         /// Analyze a protocol Word document and return the parse result
@@ -38,6 +39,24 @@ namespace DocExtractor.UI.Services
         }
 
         /// <summary>
+        /// Analyze a protocol Word document for telecommand extraction.
+        /// </summary>
+        public TelecommandParseResult AnalyzeTelecommand(string docxPath)
+        {
+            if (!File.Exists(docxPath))
+                throw new FileNotFoundException("协议文档不存在", docxPath);
+
+            var parser = new WordDocumentParser();
+            IReadOnlyList<RawTable> tables = parser.Parse(docxPath);
+
+            var paragraphs = ExtractParagraphTexts(docxPath);
+            string title = Path.GetFileNameWithoutExtension(docxPath);
+
+            var analyzer = new TelecommandAnalyzer();
+            return analyzer.Analyze(tables, title, paragraphs);
+        }
+
+        /// <summary>
         /// Export the parse result to Excel files in the specified directory.
         /// Returns the list of generated file paths.
         /// </summary>
@@ -47,6 +66,17 @@ namespace DocExtractor.UI.Services
             ExportOptions? options = null)
         {
             return _exporter.Export(result, outputDir, options);
+        }
+
+        /// <summary>
+        /// Export telecommand parse result to Excel files.
+        /// </summary>
+        public List<string> ExportTelecommand(
+            TelecommandParseResult result,
+            string outputDir,
+            TelecommandExportOptions? options = null)
+        {
+            return _telecommandExporter.Export(result, outputDir, options);
         }
 
         /// <summary>

@@ -19,11 +19,18 @@ namespace DocExtractor.UI.Controls
     /// </summary>
     public partial class ProtocolParserPanel : UserControl
     {
+        private enum ProtocolTemplateType
+        {
+            Telemetry,
+            Telecommand
+        }
+
         private readonly DocExtractorContext _ctx;
         private readonly ProtocolWorkflowService _service = new ProtocolWorkflowService();
         private string _selectedFilePath = "";
         private string _lastOutputDir = "";
         private ProtocolParseResult? _lastResult;
+        private TelecommandParseResult? _lastTelecommandResult;
 
         internal ProtocolParserPanel(DocExtractorContext ctx)
         {
@@ -58,6 +65,7 @@ namespace DocExtractor.UI.Controls
             _analyzeBtn.Enabled = true;
             _exportBtn.Enabled = false;
             _lastResult = null;
+            _lastTelecommandResult = null;
             _previewBox.Clear();
             _resultBox.Clear();
         }
@@ -69,11 +77,24 @@ namespace DocExtractor.UI.Controls
             SetBusy(true, "正在分析协议文档...");
             try
             {
-                _lastResult = await Task.Run(() => _service.Analyze(_selectedFilePath));
-                ShowPreview(_lastResult);
-                ApplyDetectedSettings(_lastResult);
+                if (GetTemplateType() == ProtocolTemplateType.Telemetry)
+                {
+                    _lastResult = await Task.Run(() => _service.Analyze(_selectedFilePath));
+                    _lastTelecommandResult = null;
+                    ShowPreview(_lastResult);
+                    ApplyDetectedSettings(_lastResult.SystemName);
+                    _ctx.NotifyStatus($"协议分析完成：同步 {_lastResult.SyncFieldCount} 字段，异步 {_lastResult.AsyncFieldCount} 字段");
+                }
+                else
+                {
+                    _lastTelecommandResult = await Task.Run(() => _service.AnalyzeTelecommand(_selectedFilePath));
+                    _lastResult = null;
+                    ShowPreview(_lastTelecommandResult);
+                    ApplyDetectedSettings(_lastTelecommandResult.SystemName);
+                    _ctx.NotifyStatus($"遥控协议分析完成：检测 {_lastTelecommandResult.Commands.Count} 条指令");
+                }
+
                 _exportBtn.Enabled = true;
-                _ctx.NotifyStatus($"协议分析完成：同步 {_lastResult.SyncFieldCount} 字段，异步 {_lastResult.AsyncFieldCount} 字段");
             }
             catch (Exception ex)
             {
@@ -87,7 +108,7 @@ namespace DocExtractor.UI.Controls
 
         private async void OnExport(object sender, EventArgs e)
         {
-            if (_lastResult == null) return;
+            if (_lastResult == null && _lastTelecommandResult == null) return;
 
             using var dlg = new FolderBrowserDialog
             {
@@ -100,13 +121,25 @@ namespace DocExtractor.UI.Controls
 
             try
             {
-                var options = BuildExportOptions();
-                OverrideResultSettings(_lastResult, options);
+                List<string> files;
+                if (GetTemplateType() == ProtocolTemplateType.Telemetry)
+                {
+                    if (_lastResult == null) return;
+                    var options = BuildExportOptions();
+                    OverrideResultSettings(_lastResult, options);
+                    files = await Task.Run(() => _service.Export(_lastResult, _lastOutputDir, options));
+                }
+                else
+                {
+                    if (_lastTelecommandResult == null) return;
+                    var options = BuildTelecommandExportOptions();
+                    OverrideResultSettings(_lastTelecommandResult);
+                    files = await Task.Run(() => _service.ExportTelecommand(_lastTelecommandResult, _lastOutputDir, options));
+                }
 
-                var files = await Task.Run(() => _service.Export(_lastResult, _lastOutputDir, options));
                 ShowExportResult(files);
                 _openFolderBtn.Enabled = true;
-                MessageHelper.Success(this, $"已生成配置文件：{Path.GetFileName(files[0])}");
+                MessageHelper.Success(this, $"已生成配置文件：{string.Join("，", files.Select(Path.GetFileName))}");
             }
             catch (Exception ex)
             {
@@ -187,6 +220,41 @@ namespace DocExtractor.UI.Controls
             }
         }
 
+        private void ShowPreview(TelecommandParseResult result)
+        {
+            _previewBox.Clear();
+            AppendPreview($"文档标题: {result.DocumentTitle}");
+            AppendPreview($"系统名称: {result.SystemName}");
+            AppendPreview($"默认端序: {result.DefaultEndianness}");
+            AppendPreview("");
+            AppendPreview($"━━ 遥控指令 ({result.Commands.Count} 条) ━━");
+
+            int showCount = Math.Min(20, result.Commands.Count);
+            for (int i = 0; i < showCount; i++)
+            {
+                TelecommandEntry c = result.Commands[i];
+                AppendPreview($"  {c.Code} | {c.Name} | 代号:{c.CodeAlias} | 参数模板:{c.Presets.Count}");
+            }
+            if (result.Commands.Count > showCount)
+                AppendPreview($"  ... 共 {result.Commands.Count} 条指令");
+
+            if (result.FrameInfos.Count > 0)
+            {
+                AppendPreview("");
+                AppendPreview("━━ CAN 帧头规则 ━━");
+                foreach (CanFrameInfo fi in result.FrameInfos.Take(10))
+                    AppendPreview($"  {fi.Channel} | {fi.FrameType} | {BitConverter.ToString(fi.HeaderBytes).Replace("-", " ")}");
+            }
+
+            if (result.Warnings.Count > 0)
+            {
+                AppendPreview("");
+                AppendPreview("━━ 警告 ━━");
+                foreach (string w in result.Warnings)
+                    AppendPreview($"  ⚠ {w}");
+            }
+        }
+
         private void ShowFieldSummary(List<ProtocolTelemetryField> fields, string indent)
         {
             int dataFields = fields.Count(f => !f.IsHeaderField && !f.IsChecksum && !f.IsReserved);
@@ -220,10 +288,10 @@ namespace DocExtractor.UI.Controls
             AppendResult($"输出目录: {_lastOutputDir}");
         }
 
-        private void ApplyDetectedSettings(ProtocolParseResult result)
+        private void ApplyDetectedSettings(string systemName)
         {
             if (string.IsNullOrEmpty(_systemNameInput.Text))
-                _systemNameInput.PlaceholderText = result.SystemName;
+                _systemNameInput.PlaceholderText = systemName;
         }
 
         private ExportOptions BuildExportOptions()
@@ -242,7 +310,25 @@ namespace DocExtractor.UI.Controls
             };
         }
 
+        private TelecommandExportOptions BuildTelecommandExportOptions()
+        {
+            var options = new TelecommandExportOptions
+            {
+                CodePrefixOverride = string.IsNullOrWhiteSpace(_codePrefixInput.Text) ? null : _codePrefixInput.Text.Trim(),
+                Formats = GetExportFormat(),
+                IncludeUsageSheet = true
+            };
+            return options;
+        }
+
         private void OverrideResultSettings(ProtocolParseResult result, ExportOptions options)
+        {
+            string sysOverride = (_systemNameInput.Text ?? "").Trim();
+            if (sysOverride.Length > 0)
+                result.SystemName = sysOverride;
+        }
+
+        private void OverrideResultSettings(TelecommandParseResult result)
         {
             string sysOverride = (_systemNameInput.Text ?? "").Trim();
             if (sysOverride.Length > 0)
@@ -253,7 +339,7 @@ namespace DocExtractor.UI.Controls
         {
             _browseBtn.Enabled = !busy;
             _analyzeBtn.Enabled = !busy && !string.IsNullOrEmpty(_selectedFilePath);
-            _exportBtn.Enabled = !busy && _lastResult != null;
+            _exportBtn.Enabled = !busy && (_lastResult != null || _lastTelecommandResult != null);
             _downloadTemplateBtn.Enabled = !busy;
 
             if (!string.IsNullOrEmpty(status))
@@ -270,6 +356,20 @@ namespace DocExtractor.UI.Controls
         private void AppendResult(string text)
         {
             _resultBox.AppendText(text + Environment.NewLine);
+        }
+
+        private ProtocolTemplateType GetTemplateType()
+        {
+            string text = _templateTypeCombo.SelectedItem?.ToString() ?? "";
+            return text.Contains("遥控") ? ProtocolTemplateType.Telecommand : ProtocolTemplateType.Telemetry;
+        }
+
+        private TelecommandExportFormat GetExportFormat()
+        {
+            string text = _exportFormatCombo.SelectedItem?.ToString() ?? "";
+            if (text.Contains("仅格式A")) return TelecommandExportFormat.FormatA;
+            if (text.Contains("仅格式B")) return TelecommandExportFormat.FormatB;
+            return TelecommandExportFormat.Both;
         }
     }
 }
