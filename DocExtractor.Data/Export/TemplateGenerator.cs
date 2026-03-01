@@ -276,6 +276,90 @@ namespace DocExtractor.Data.Export
         }
 
         /// <summary>
+        /// 生成遥测解析配置空白模板（供用户下载后手工填写或自动填充）
+        /// </summary>
+        public static void GenerateTelemetryConfigTemplate(string outputPath)
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using var package = new ExcelPackage();
+
+            // 同步遥测模板 Sheet
+            var syncSheet = package.Workbook.Worksheets.Add("同步遥测解析");
+            WriteTelemetryTemplateHeaders(syncSheet);
+
+            // 异步遥测模板 Sheet
+            var asyncSheet = package.Workbook.Worksheets.Add("异步遥测解析");
+            WriteTelemetryTemplateHeaders(asyncSheet);
+
+            // APID 队列设置 Sheet
+            var apidSheet = package.Workbook.Worksheets.Add("遥测帧APID队列设置");
+            SetHeader(apidSheet, 1, 1, "首帧APID号");
+            apidSheet.Cells[2, 1].Value = "续帧ID号";
+            apidSheet.Column(1).Width = 20;
+            apidSheet.Column(2).Width = 18;
+            apidSheet.Column(3).Width = 18;
+
+            // 公式 Sheet
+            var formulaSheet = package.Workbook.Worksheets.Add("公式");
+            SetHeader(formulaSheet, 1, 1, "公式号");
+            SetHeader(formulaSheet, 1, 2, "公式系数");
+            SetHeader(formulaSheet, 1, 3, "公式");
+            SetHeader(formulaSheet, 1, 4, "说明");
+            formulaSheet.Cells[2, 1].Value = "0"; formulaSheet.Cells[2, 2].Value = "1/0/";
+            formulaSheet.Cells[2, 3].Value = "源码显示";
+            formulaSheet.Cells[3, 1].Value = "5"; formulaSheet.Cells[3, 2].Value = "A/B/";
+            formulaSheet.Cells[3, 3].Value = "X = A × DU + B"; formulaSheet.Cells[3, 4].Value = "无符号整型线性";
+            formulaSheet.Cells[4, 1].Value = "6"; formulaSheet.Cells[4, 2].Value = "A/B/";
+            formulaSheet.Cells[4, 3].Value = "X = A × DI + B"; formulaSheet.Cells[4, 4].Value = "有符号整型线性";
+            formulaSheet.Column(1).Width = 10; formulaSheet.Column(2).Width = 12;
+            formulaSheet.Column(3).Width = 25; formulaSheet.Column(4).Width = 20;
+
+            // 使用说明 Sheet
+            var helpSheet = package.Workbook.Worksheets.Add("使用说明");
+            helpSheet.Cells[1, 1].Value = "遥测解析配置表模板 — 使用说明";
+            helpSheet.Cells[1, 1].Style.Font.Bold = true;
+            helpSheet.Cells[1, 1].Style.Font.Size = 14;
+            helpSheet.Cells[3, 1].Value = "1. 在「同步遥测解析」和「异步遥测解析」Sheet 中填写遥测参数定义";
+            helpSheet.Cells[4, 1].Value = "2. 序号自动递增，所属系统填写子系统缩写（如 PPU、OBC）";
+            helpSheet.Cells[5, 1].Value = "3. APID值为16进制CAN帧ID（如 080000048B）";
+            helpSheet.Cells[6, 1].Value = "4. 起始字节使用W编号（如 W0, W1），位字段用起始位标注";
+            helpSheet.Cells[7, 1].Value = "5. 遥测代号格式：{系统名}{TB/YB}-{四位序号}（如 PPUTB-0001）";
+            helpSheet.Cells[8, 1].Value = "6. 公式类型默认为5（无符号整型线性），公式系数默认为 1/0/";
+            helpSheet.Cells[9, 1].Value = "7. 也可使用「协议解析」功能从协议文档自动生成配置";
+            helpSheet.Column(1).Width = 80;
+
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+            package.SaveAs(new FileInfo(outputPath));
+        }
+
+        private static void WriteTelemetryTemplateHeaders(ExcelWorksheet sheet)
+        {
+            string[] headers = {
+                "序号", "所属系统", "APID值", "起始字节", "起始位",
+                "字节长度/位长度", "波道名称", "遥测代号", "字节端序",
+                "公式类型", "公式系数", "小数位数", "量纲", "枚举解译", "所属包"
+            };
+
+            for (int c = 0; c < headers.Length; c++)
+                SetHeader(sheet, 1, c + 1, headers[c]);
+
+            for (int i = 2; i <= 11; i++)
+            {
+                for (int c = 1; c <= headers.Length; c++)
+                {
+                    sheet.Cells[i, c].Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
+                    sheet.Cells[i, c].Style.Border.Bottom.Color.SetColor(Color.LightGray);
+                }
+            }
+
+            double[] widths = { 6, 10, 14, 10, 8, 14, 20, 14, 10, 10, 10, 10, 8, 20, 10 };
+            for (int c = 0; c < widths.Length; c++)
+                sheet.Column(c + 1).Width = widths[c];
+
+            sheet.View.FreezePanes(2, 1);
+        }
+
+        /// <summary>
         /// 确保模板目录存在，若模板文件不存在则生成
         /// </summary>
         public static void EnsureTemplates(string templateDir)
@@ -293,6 +377,10 @@ namespace DocExtractor.Data.Export
             string configTemplatePath = Path.Combine(templateDir, "字段配置模板.xlsx");
             if (!File.Exists(configTemplatePath))
                 GenerateConfigTemplate(configTemplatePath);
+
+            string telemetryTemplatePath = Path.Combine(templateDir, "遥测解析配置模板.xlsx");
+            if (!File.Exists(telemetryTemplatePath))
+                GenerateTelemetryConfigTemplate(telemetryTemplatePath);
         }
 
         // ── 内部数据 ──────────────────────────────────────────────────────

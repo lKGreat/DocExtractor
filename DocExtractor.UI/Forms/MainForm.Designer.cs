@@ -23,6 +23,7 @@ namespace DocExtractor.UI.Forms
             this._navFieldConfigBtn = new AntdUI.Button();
             this._navSplitRuleBtn = new AntdUI.Button();
             this._navTrainingBtn = new AntdUI.Button();
+            this._navProtocolBtn = new AntdUI.Button();
             this._contentPanel = new Panel();
             this._statusStrip = new StatusStrip();
             this._statusBarLabel = new ToolStripStatusLabel();
@@ -117,7 +118,15 @@ namespace DocExtractor.UI.Forms
             this._navTrainingBtn.Margin = new Padding(0, 0, 0, 4);
             this._navTrainingBtn.Click += OnNavTraining;
 
+            this._navProtocolBtn.Text = "协议解析";
+            this._navProtocolBtn.Type = AntdUI.TTypeMini.Default;
+            this._navProtocolBtn.Dock = DockStyle.Top;
+            this._navProtocolBtn.Height = 46;
+            this._navProtocolBtn.Margin = new Padding(0, 0, 0, 4);
+            this._navProtocolBtn.Click += OnNavProtocol;
+
             // Add in reverse order because DockStyle.Top stacks bottom-up
+            this._navPanel.Controls.Add(this._navProtocolBtn);
             this._navPanel.Controls.Add(this._navTrainingBtn);
             this._navPanel.Controls.Add(this._navSplitRuleBtn);
             this._navPanel.Controls.Add(this._navFieldConfigBtn);
@@ -152,6 +161,7 @@ namespace DocExtractor.UI.Forms
         private AntdUI.Button _navFieldConfigBtn;
         private AntdUI.Button _navSplitRuleBtn;
         private AntdUI.Button _navTrainingBtn;
+        private AntdUI.Button _navProtocolBtn;
         private Panel _contentPanel;
         private StatusStrip _statusStrip;
         private ToolStripStatusLabel _statusBarLabel;

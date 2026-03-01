@@ -20,6 +20,7 @@ namespace DocExtractor.UI.Forms
         private readonly FieldConfigPanel _fieldConfigPanel;
         private readonly SplitRulePanel _splitRulePanel;
         private readonly TrainingPanel _trainingPanel;
+        private readonly ProtocolParserPanel _protocolParserPanel;
 
         private List<(int Id, string Name)> _configItems = new List<(int, string)>();
         private UserControl _activePanel;
@@ -39,6 +40,7 @@ namespace DocExtractor.UI.Forms
             _fieldConfigPanel.ConfigDataSaved += OnConfigDataSaved;
             _splitRulePanel = new SplitRulePanel(_ctx);
             _trainingPanel = new TrainingPanel(_ctx);
+            _protocolParserPanel = new ProtocolParserPanel(_ctx);
 
             _ctx.StatusMessage += msg => _statusBarLabel.Text = msg;
 
@@ -64,11 +66,12 @@ namespace DocExtractor.UI.Forms
             else if (panel is FieldConfigPanel fcp) fcp.OnActivated();
             else if (panel is SplitRulePanel srp) srp.OnActivated();
             else if (panel is TrainingPanel tp) tp.OnActivated();
+            else if (panel is ProtocolParserPanel pp) pp.OnActivated();
         }
 
         private void HighlightNavButton(AntdUI.Button active)
         {
-            foreach (var btn in new[] { _navExtractionBtn, _navFieldConfigBtn, _navSplitRuleBtn, _navTrainingBtn })
+            foreach (var btn in new[] { _navExtractionBtn, _navFieldConfigBtn, _navSplitRuleBtn, _navTrainingBtn, _navProtocolBtn })
                 btn.Type = btn == active ? AntdUI.TTypeMini.Primary : AntdUI.TTypeMini.Default;
         }
 
@@ -76,6 +79,7 @@ namespace DocExtractor.UI.Forms
         private void OnNavFieldConfig(object sender, EventArgs e) { ShowPanel(_fieldConfigPanel); HighlightNavButton(_navFieldConfigBtn); }
         private void OnNavSplitRule(object sender, EventArgs e) { ShowPanel(_splitRulePanel); HighlightNavButton(_navSplitRuleBtn); }
         private void OnNavTraining(object sender, EventArgs e) { ShowPanel(_trainingPanel); HighlightNavButton(_navTrainingBtn); }
+        private void OnNavProtocol(object sender, EventArgs e) { ShowPanel(_protocolParserPanel); HighlightNavButton(_navProtocolBtn); }
 
         // ── Config Combo ──────────────────────────────────────────────────────
 
