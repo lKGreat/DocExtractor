@@ -73,7 +73,7 @@ namespace DocExtractor.UI.Controls
                 Orientation = Orientation.Horizontal,
                 Height      = 800
             };
-            NlpLabTheme.SetSplitterDistanceDeferred(mainSplit, 0.6, panel1Min: 180, panel2Min: 140);
+            NlpLabTheme.SetSplitterDistanceDeferred(mainSplit, 0.72, panel1Min: 300, panel2Min: 140);
 
             var topSplit = new SplitContainer
             {
@@ -81,7 +81,7 @@ namespace DocExtractor.UI.Controls
                 Orientation = Orientation.Vertical,
                 Width       = 1200
             };
-            NlpLabTheme.SetSplitterDistanceDeferred(topSplit, 0.45, panel1Min: 240, panel2Min: 300);
+            NlpLabTheme.SetSplitterDistanceDeferred(topSplit, 0.5, panel1Min: 320, panel2Min: 320);
 
             topSplit.Panel1.Controls.Add(BuildInputSection());
             topSplit.Panel2.Controls.Add(BuildResultSection());
@@ -89,12 +89,76 @@ namespace DocExtractor.UI.Controls
 
             mainSplit.Panel2.Controls.Add(BuildEntitySection());
 
-            this.Controls.Add(mainSplit);
+            var root = new Panel { Dock = DockStyle.Fill };
+            root.Controls.Add(mainSplit);
+            root.Controls.Add(BuildQuickStartBar());
+            this.Controls.Add(root);
+        }
+
+        private Control BuildQuickStartBar()
+        {
+            var bar = new Panel
+            {
+                Dock      = DockStyle.Top,
+                Height    = 40,
+                BackColor = Color.FromArgb(246, 250, 255),
+                Padding   = new Padding(8, 4, 8, 4)
+            };
+
+            var flow = new FlowLayoutPanel
+            {
+                Dock          = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents  = true,
+                AutoSize      = false,
+                Margin        = new Padding(0)
+            };
+
+            flow.Controls.Add(new Label
+            {
+                AutoSize  = true,
+                Text      = "快速上手：",
+                Font      = NlpLabTheme.BodyBold,
+                ForeColor = NlpLabTheme.Primary,
+                Margin    = new Padding(0, 6, 6, 0)
+            });
+            flow.Controls.Add(new Label
+            {
+                AutoSize  = true,
+                Text      = "1) 输入或粘贴文本",
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextSecondary,
+                Margin    = new Padding(0, 6, 12, 0)
+            });
+            flow.Controls.Add(new Label
+            {
+                AutoSize  = true,
+                Text      = "2) 点击“提取实体”并修正实体",
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextSecondary,
+                Margin    = new Padding(0, 6, 12, 0)
+            });
+            flow.Controls.Add(new Label
+            {
+                AutoSize  = true,
+                Text      = "3) 点击“提交校正”加入训练样本",
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextSecondary,
+                Margin    = new Padding(0, 6, 0, 0)
+            });
+
+            bar.Controls.Add(flow);
+            return bar;
         }
 
         private Panel BuildInputSection()
         {
-            var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 0, 4, 0) };
+            var panel = new Panel
+            {
+                Dock        = DockStyle.Fill,
+                Padding     = new Padding(0, 0, 4, 0),
+                MinimumSize = new Size(320, 220)
+            };
 
             var title = new Label
             {
@@ -112,7 +176,9 @@ namespace DocExtractor.UI.Controls
                 Font        = NlpLabTheme.TextInput,
                 ScrollBars  = RichTextBoxScrollBars.Vertical,
                 BorderStyle = BorderStyle.FixedSingle,
-                AcceptsTab  = true
+                AcceptsTab  = true,
+                BackColor   = Color.White,
+                MinimumSize = new Size(0, 140)
             };
             SetPlaceholder();
             _inputBox.GotFocus += (s, e) =>
@@ -588,7 +654,7 @@ namespace DocExtractor.UI.Controls
         {
             _isPlaceholder      = true;
             _inputBox.Text      = "请在此处输入或粘贴文本，支持单句、段落或整篇文章...";
-            _inputBox.ForeColor = NlpLabTheme.TextTertiary;
+            _inputBox.ForeColor = NlpLabTheme.TextSecondary;
         }
 
         private void ClearAll()

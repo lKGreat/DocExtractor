@@ -122,9 +122,6 @@ namespace DocExtractor.UI.Controls
             int? panel1Min = null,
             int? panel2Min = null)
         {
-            if (panel1Min.HasValue) split.Panel1MinSize = panel1Min.Value;
-            if (panel2Min.HasValue) split.Panel2MinSize = panel2Min.Value;
-
             split.HandleCreated += (s, e) =>
             {
                 split.BeginInvoke((MethodInvoker)(() =>
@@ -134,11 +131,25 @@ namespace DocExtractor.UI.Controls
                         int totalSize = split.Orientation == Orientation.Horizontal
                             ? split.Height
                             : split.Width;
+                        if (totalSize <= 0) return;
+
+                        int desiredPanel1Min = panel1Min ?? split.Panel1MinSize;
+                        int desiredPanel2Min = panel2Min ?? split.Panel2MinSize;
+
+                        // Important: avoid setting impossible min sizes while control is still settling.
+                        int maxPanel1Min = System.Math.Max(0, totalSize - desiredPanel2Min - split.SplitterWidth - 1);
+                        int actualPanel1Min = System.Math.Min(desiredPanel1Min, maxPanel1Min);
+                        int maxPanel2Min = System.Math.Max(0, totalSize - actualPanel1Min - split.SplitterWidth - 1);
+                        int actualPanel2Min = System.Math.Min(desiredPanel2Min, maxPanel2Min);
+
+                        split.Panel1MinSize = actualPanel1Min;
+                        split.Panel2MinSize = actualPanel2Min;
+
+                        int minDist = actualPanel1Min;
+                        int maxDist = System.Math.Max(minDist, totalSize - actualPanel2Min - split.SplitterWidth);
                         int dist = (int)(totalSize * ratio);
-                        dist = System.Math.Max(split.Panel1MinSize, dist);
-                        dist = System.Math.Min(totalSize - split.Panel2MinSize - split.SplitterWidth, dist);
-                        if (dist > split.Panel1MinSize)
-                            split.SplitterDistance = dist;
+                        dist = System.Math.Max(minDist, System.Math.Min(maxDist, dist));
+                        split.SplitterDistance = dist;
                     }
                     catch { }
                 }));

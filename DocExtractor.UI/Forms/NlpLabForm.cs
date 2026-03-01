@@ -30,6 +30,8 @@ namespace DocExtractor.UI.Forms
         private Button   _importTextsBtn     = null!;
         private Label    _statusBar          = null!;
         private Label    _modelStatusLabel   = null!;
+        private Panel    _mainContainer      = null!;
+        private Panel    _headerContainer    = null!;
 
         private Panel   _tabBar        = null!;
         private Button  _tabAnalysis   = null!;
@@ -67,10 +69,31 @@ namespace DocExtractor.UI.Forms
             this.Font          = NlpLabTheme.Body;
             this.BackColor     = NlpLabTheme.BgBody;
 
-            BuildToolbar();
+            BuildMainContainers();
             BuildTabBar();
+            BuildToolbar();
             BuildContentArea();
             BuildStatusBar();
+        }
+
+        private void BuildMainContainers()
+        {
+            _mainContainer = new Panel
+            {
+                Dock      = DockStyle.Fill,
+                BackColor = NlpLabTheme.BgBody
+            };
+
+            _headerContainer = new Panel
+            {
+                Dock      = DockStyle.Top,
+                Height    = 92,
+                MinimumSize = new Size(0, 84),
+                BackColor = NlpLabTheme.BgToolbar
+            };
+
+            _mainContainer.Controls.Add(_headerContainer);
+            this.Controls.Add(_mainContainer);
         }
 
         private void BuildToolbar()
@@ -152,7 +175,7 @@ namespace DocExtractor.UI.Forms
             toolbar.Controls.Add(scenarioBar);
             toolbar.Controls.Add(logoLabel);
 
-            this.Controls.Add(toolbar);
+            _headerContainer.Controls.Add(toolbar);
         }
 
         private void BuildTabBar()
@@ -194,7 +217,7 @@ namespace DocExtractor.UI.Forms
             _tabBar.Controls.Add(tabFlow);
             _tabBar.Controls.Add(separator);
 
-            this.Controls.Add(_tabBar);
+            _headerContainer.Controls.Add(_tabBar);
         }
 
         private static Button CreateTabButton(string text)
@@ -224,7 +247,7 @@ namespace DocExtractor.UI.Forms
                 BackColor = NlpLabTheme.BgBody,
                 Padding   = new Padding(0)
             };
-            this.Controls.Add(_contentPanel);
+            _mainContainer.Controls.Add(_contentPanel);
         }
 
         private void BuildStatusBar()
