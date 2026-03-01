@@ -68,6 +68,7 @@ namespace DocExtractor.Core.Protocol
 
             var fields = new List<ProtocolTelemetryField>();
             int headerRows = DetectHeaderRows(table);
+            string lastByteSeq = "";
 
             for (int r = headerRows; r < table.RowCount; r++)
             {
@@ -79,14 +80,22 @@ namespace DocExtractor.Core.Protocol
                 if (string.IsNullOrEmpty(byteSeq) && string.IsNullOrEmpty(name))
                     continue;
 
+                string normalizedSeq = NormalizeByteSequence(byteSeq);
+                if (!string.IsNullOrEmpty(normalizedSeq))
+                    lastByteSeq = normalizedSeq;
+
                 var field = new ProtocolTelemetryField
                 {
-                    ByteSequence = NormalizeByteSequence(byteSeq),
+                    ByteSequence = normalizedSeq,
                     Remarks = remarks
                 };
 
                 ParseByteLength(lengthStr, field);
                 ParseFieldName(name, field);
+
+                if (string.IsNullOrEmpty(field.ByteSequence) && field.BitLength > 0)
+                    field.ByteSequence = lastByteSeq;
+
                 ExtractUnit(remarks, name, field);
                 ExtractEnum(remarks, field);
                 ExtractDataType(remarks, field);
@@ -174,7 +183,8 @@ namespace DocExtractor.Core.Protocol
                 int lowBit = int.Parse(bitMatch.Groups[2].Value);
                 field.BitOffset = lowBit;
                 field.BitLength = highBit - lowBit + 1;
-                field.FieldName = bitMatch.Groups[3].Value.Trim();
+                string desc = bitMatch.Groups[3].Value.Trim();
+                field.FieldName = $"b{highBit}-b{lowBit}{desc}";
                 return;
             }
 
@@ -184,7 +194,8 @@ namespace DocExtractor.Core.Protocol
                 int bit = int.Parse(singleBitMatch.Groups[1].Value);
                 field.BitOffset = bit;
                 field.BitLength = 1;
-                field.FieldName = singleBitMatch.Groups[2].Value.Trim();
+                string desc = singleBitMatch.Groups[2].Value.Trim();
+                field.FieldName = $"b{bit}{desc}";
                 return;
             }
 
@@ -203,8 +214,12 @@ namespace DocExtractor.Core.Protocol
                         int lowBit = int.Parse(nums[1].Value);
                         field.BitOffset = lowBit;
                         field.BitLength = highBit - lowBit + 1;
+                        field.FieldName = $"b{highBit}-b{lowBit}{desc}";
                     }
-                    field.FieldName = desc;
+                    else
+                    {
+                        field.FieldName = desc;
+                    }
                     return;
                 }
             }
@@ -250,6 +265,8 @@ namespace DocExtractor.Core.Protocol
         {
             if (string.IsNullOrEmpty(unit)) return unit;
             unit = unit.TrimEnd('，', ',', '；', ';', '。', '.', '、');
+            unit = Regex.Replace(unit, @"^[\d.]+", "");
+            if (string.IsNullOrEmpty(unit)) return unit;
             if (unit.Length > 10) unit = unit.Substring(0, 10);
             return unit;
         }
@@ -296,9 +313,16 @@ namespace DocExtractor.Core.Protocol
             {
                 var parts = new List<string>();
                 foreach (Match m in hexMatches)
-                    parts.Add(m.Groups[1].Value + "-" + m.Groups[2].Value.Trim());
-                field.EnumMapping = string.Join("|", parts);
-                return;
+                {
+                    string desc = m.Groups[2].Value.Trim();
+                    if (!IsValidEnumDescription(desc)) continue;
+                    parts.Add(m.Groups[1].Value + "-" + desc);
+                }
+                if (parts.Count >= 2)
+                {
+                    field.EnumMapping = string.Join("|", parts);
+                    return;
+                }
             }
 
             if (remarks.Contains("|"))
@@ -308,10 +332,26 @@ namespace DocExtractor.Core.Protocol
                 {
                     var parts = new List<string>();
                     foreach (Match m in decMatches)
-                        parts.Add(m.Groups[1].Value + "-" + m.Groups[2].Value.Trim());
-                    field.EnumMapping = string.Join("|", parts);
+                    {
+                        string desc = m.Groups[2].Value.Trim();
+                        if (!IsValidEnumDescription(desc)) continue;
+                        parts.Add(m.Groups[1].Value + "-" + desc);
+                    }
+                    if (parts.Count >= 2)
+                        field.EnumMapping = string.Join("|", parts);
                 }
             }
+        }
+
+        private static bool IsValidEnumDescription(string desc)
+        {
+            if (string.IsNullOrEmpty(desc)) return false;
+            if (Regex.IsMatch(desc, @"^0[xX][\dA-Fa-f]+$")) return false;
+            if (Regex.IsMatch(desc, @"^[\d.]+$")) return false;
+            if (Regex.IsMatch(desc, @"^[\d\s,，.xXA-Fa-f\-–~]+$")) return false;
+            if (desc.Contains("取值") || desc.Contains("范围") || desc.Contains("进制"))
+                return false;
+            return true;
         }
 
         private void ExtractDataType(string remarks, ProtocolTelemetryField field)

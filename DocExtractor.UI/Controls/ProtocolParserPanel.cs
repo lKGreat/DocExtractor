@@ -106,7 +106,7 @@ namespace DocExtractor.UI.Controls
                 var files = await Task.Run(() => _service.Export(_lastResult, _lastOutputDir, options));
                 ShowExportResult(files);
                 _openFolderBtn.Enabled = true;
-                MessageHelper.Success(this, $"已生成 {files.Count} 个配置文件");
+                MessageHelper.Success(this, $"已生成配置文件：{Path.GetFileName(files[0])}");
             }
             catch (Exception ex)
             {

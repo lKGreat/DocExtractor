@@ -10,9 +10,9 @@ using OfficeOpenXml.Style;
 namespace DocExtractor.Data.Export
 {
     /// <summary>
-    /// Generates telemetry configuration Excel files from a <see cref="ProtocolParseResult"/>.
-    /// Produces separate files for sync and async telemetry, each with A/B channel sheets,
-    /// APID queue settings, and formula reference.
+    /// Generates a single telemetry configuration Excel file from a <see cref="ProtocolParseResult"/>.
+    /// Sync and async telemetry are placed on separate sheets within the same workbook,
+    /// together with APID queue settings and formula reference sheets.
     /// </summary>
     public class TelemetryConfigExporter
     {
@@ -26,72 +26,77 @@ namespace DocExtractor.Data.Export
         }
 
         /// <summary>
-        /// Export sync and async telemetry config files.
-        /// Returns the list of generated file paths.
+        /// Export telemetry config to a single Excel file.
+        /// Sync and async telemetry are written as separate sheets within one workbook.
+        /// Returns the list containing the single generated file path.
         /// </summary>
         public List<string> Export(ProtocolParseResult result, string outputDir, ExportOptions? options = null)
         {
             var opts = options ?? new ExportOptions();
             Directory.CreateDirectory(outputDir);
-            var files = new List<string>();
 
-            if (result.SyncTables.Count > 0)
-            {
-                var allSyncFields = new List<ProtocolTelemetryField>();
-                foreach (var t in result.SyncTables)
-                    allSyncFields.AddRange(t.Fields);
+            string outputPath = Path.Combine(outputDir,
+                $"{result.SystemName}_遥测解析配置.xlsx");
 
-                string syncPath = Path.Combine(outputDir,
-                    $"{result.SystemName}_同步遥测解析配置.xlsx");
-                ExportSingle(allSyncFields, result, result.SyncChannels,
-                    syncPath, "TB", opts);
-                files.Add(syncPath);
-            }
-
-            if (result.AsyncTables.Count > 0)
-            {
-                var allAsyncFields = new List<ProtocolTelemetryField>();
-                foreach (var t in result.AsyncTables)
-                    allAsyncFields.AddRange(t.Fields);
-
-                string asyncPath = Path.Combine(outputDir,
-                    $"{result.SystemName}_异步遥测解析配置.xlsx");
-                ExportSingle(allAsyncFields, result, result.AsyncChannels,
-                    asyncPath, "YB", opts);
-                files.Add(asyncPath);
-            }
-
-            return files;
-        }
-
-        /// <summary>
-        /// Generate a single telemetry config Excel file with A/B channel sheets.
-        /// </summary>
-        private void ExportSingle(
-            List<ProtocolTelemetryField> fields,
-            ProtocolParseResult result,
-            List<ChannelInfo> channels,
-            string outputPath,
-            string codeTypeSuffix,
-            ExportOptions opts)
-        {
             using var package = new ExcelPackage();
 
-            foreach (var channel in channels)
+            WriteUpdateLogSheet(package);
+
+            var allSyncFields = new List<ProtocolTelemetryField>();
+            foreach (var t in result.SyncTables)
+                allSyncFields.AddRange(t.Fields);
+
+            var allAsyncFields = new List<ProtocolTelemetryField>();
+            foreach (var t in result.AsyncTables)
+                allAsyncFields.AddRange(t.Fields);
+
+            var allChannels = new List<ChannelInfo>();
+
+            if (allSyncFields.Count > 0)
             {
-                string sheetName = $"{result.SystemName}遥测解析-" +
-                    (channel.ChannelLabel.Contains("A") ? "A" : "B");
-                var sheet = package.Workbook.Worksheets.Add(sheetName);
-                WriteDataSheet(sheet, fields, result, channel, codeTypeSuffix, opts);
+                foreach (var channel in result.SyncChannels)
+                {
+                    string suffix = channel.ChannelLabel.Contains("A") ? "A" : "B";
+                    string sheetName = $"{result.SystemName}同步遥测解析-{suffix}";
+                    var sheet = package.Workbook.Worksheets.Add(sheetName);
+                    WriteDataSheet(sheet, allSyncFields, result, channel, "TB", opts);
+                    if (!allChannels.Exists(c => c.FrameIdHex == channel.FrameIdHex))
+                        allChannels.Add(channel);
+                }
             }
 
-            WriteApidQueueSheet(package, channels, result.SystemName);
+            if (allAsyncFields.Count > 0)
+            {
+                foreach (var channel in result.AsyncChannels)
+                {
+                    string suffix = channel.ChannelLabel.Contains("A") ? "A" : "B";
+                    string sheetName = $"{result.SystemName}异步遥测解析-{suffix}";
+                    var sheet = package.Workbook.Worksheets.Add(sheetName);
+                    WriteDataSheet(sheet, allAsyncFields, result, channel, "YB", opts);
+                    if (!allChannels.Exists(c => c.FrameIdHex == channel.FrameIdHex))
+                        allChannels.Add(channel);
+                }
+            }
+
+            if (allChannels.Count == 0)
+            {
+                allChannels.AddRange(result.SyncChannels);
+                foreach (var ch in result.AsyncChannels)
+                {
+                    if (!allChannels.Exists(c => c.FrameIdHex == ch.FrameIdHex))
+                        allChannels.Add(ch);
+                }
+            }
+
+            WriteApidQueueSheet(package, allChannels, result.SystemName);
             WriteFormulaSheet(package);
 
             var fi = new FileInfo(outputPath);
             if (fi.Directory != null && !fi.Directory.Exists)
                 fi.Directory.Create();
             package.SaveAs(fi);
+
+            return new List<string> { outputPath };
         }
 
         private void WriteDataSheet(
@@ -223,6 +228,21 @@ namespace DocExtractor.Data.Export
             sheet.Column(2).Width = 12;
             sheet.Column(3).Width = 30;
             sheet.Column(4).Width = 25;
+        }
+
+        private void WriteUpdateLogSheet(ExcelPackage package)
+        {
+            var sheet = package.Workbook.Worksheets.Add("更新记录");
+
+            SetHeaderCell(sheet, 1, 1, "日期");
+            SetHeaderCell(sheet, 1, 2, "版本");
+            SetHeaderCell(sheet, 1, 3, "修改内容");
+            SetHeaderCell(sheet, 1, 4, "修改人");
+
+            sheet.Column(1).Width = 16;
+            sheet.Column(2).Width = 12;
+            sheet.Column(3).Width = 40;
+            sheet.Column(4).Width = 14;
         }
 
         private string FormatStartByte(ProtocolTelemetryField field)
