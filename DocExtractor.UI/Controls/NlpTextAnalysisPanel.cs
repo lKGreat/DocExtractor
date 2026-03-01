@@ -710,19 +710,7 @@ namespace DocExtractor.UI.Controls
                 }
             }
 
-            var ordered = _currentEntities
-                .Select((ann, idx) => new { Ann = ann, Index = idx + 1 })
-                .OrderBy(x => x.Ann.StartIndex)
-                .ToList();
-            for (int i = 1; i < ordered.Count; i++)
-            {
-                if (ordered[i].Ann.StartIndex <= ordered[i - 1].Ann.EndIndex)
-                {
-                    error = $"第 {ordered[i - 1].Index} 行与第 {ordered[i].Index} 行存在重叠区间。";
-                    return false;
-                }
-            }
-
+            // 允许重叠区间：提交校正时按用户编辑结果直接保存。
             return true;
         }
 

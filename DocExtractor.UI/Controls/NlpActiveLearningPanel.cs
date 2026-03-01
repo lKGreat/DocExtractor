@@ -665,19 +665,7 @@ namespace DocExtractor.UI.Controls
                 }
             }
 
-            var ordered = annotations
-                .Select((ann, idx) => new { Ann = ann, Index = idx + 1 })
-                .OrderBy(x => x.Ann.StartIndex)
-                .ToList();
-            for (int i = 1; i < ordered.Count; i++)
-            {
-                if (ordered[i].Ann.StartIndex <= ordered[i - 1].Ann.EndIndex)
-                {
-                    error = $"第 {ordered[i - 1].Index} 行与第 {ordered[i].Index} 行存在重叠区间。";
-                    return false;
-                }
-            }
-
+            // 允许重叠区间：某些场景下需要保留交叉或嵌套标注，直接按用户编辑结果保存。
             return true;
         }
 
@@ -724,7 +712,13 @@ namespace DocExtractor.UI.Controls
                 _ => TrainingParameters.Standard()
             };
 
+            // 主动学习场景：NER 统一最多训练 30 轮；
+            // “明显改善”定义为 F1 至少提升 0.5%（用于模型替换判定）。
+            preset.NerEpochs = 30;
+            _engine.QualityGateMinDelta = 0.005;
+
             AppendLog("========== 开始增量训练 ==========");
+            AppendLog($"训练策略：NER 最多 {preset.NerEpochs} 轮；明显改善阈值 {_engine.QualityGateMinDelta:P2}");
 
             var progress = new Progress<(string Stage, string Detail, double Percent)>(info =>
             {

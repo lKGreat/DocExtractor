@@ -275,7 +275,7 @@ namespace DocExtractor.Data.ActiveLearning
                 else
                 {
                     result.Success    = true;
-                    result.Message    = $"训练完成但未优于当前模型（目标提示 {QualityGateTargetF1:P0}，当前 {metricsAfter.F1:P1}），未应用";
+                    result.Message    = $"训练完成但未达到明显改善阈值（需提升 ≥ {QualityGateMinDelta:P2}，实际 {metricsAfter.F1 - metricsBefore.F1:+0.00%;-0.00%;0.00%}），未应用";
                 }
 
                 result.ModelApplied = modelApplied;
