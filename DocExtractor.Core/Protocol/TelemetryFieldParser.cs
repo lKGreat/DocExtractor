@@ -20,13 +20,16 @@ namespace DocExtractor.Core.Protocol
             @"^[WBw](\d+)$", RegexOptions.Compiled);
 
         private static readonly Regex BitFieldRx = new Regex(
-            @"[bB](\d+)\s*[-–~]\s*[bB](\d+)\s*[：:]\s*(.+)", RegexOptions.Compiled);
+            @"(?:[bB]|bit)\s*(\d+)\s*[-–~]\s*(?:[bB]|bit)\s*(\d+)\s*(?:[：:]\s*)?(.+)",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private static readonly Regex SingleBitRx = new Regex(
-            @"[bB](\d+)\s*[：:]\s*(.+)", RegexOptions.Compiled);
+            @"(?:[bB]|bit)\s*(\d+)\s*(?:[：:]\s*)?(.+)",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private static readonly Regex BitPrefixRx = new Regex(
-            @"^[bB]\d+\s*[-–~]\s*[bB]\d+\s*[：:]", RegexOptions.Compiled);
+            @"^(?:[bB]|bit)\s*\d+\s*[-–~]\s*(?:[bB]|bit)\s*\d+\s*[：:]",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private static readonly Regex UnitRx = new Regex(
             @"单位[：:\s]*([^\s,，;；、\n\r]+)", RegexOptions.Compiled);
@@ -59,6 +62,7 @@ namespace DocExtractor.Core.Protocol
             int byteSeqCol = FindColumn(table, "字序", "字节", "偏移");
             int nameCol = FindColumn(table, "数据内容", "名称", "参数名");
             int lengthCol = FindColumn(table, "字节长度", "长度", "字节数");
+            int startBitCol = FindColumn(table, "起始位", "起始BIT", "起始bit", "位偏移", "bit偏移");
             int remarkCol = FindColumn(table, "备注", "说明", "描述");
 
             if (byteSeqCol < 0) byteSeqCol = 0;
@@ -75,13 +79,15 @@ namespace DocExtractor.Core.Protocol
                 string byteSeq = table.GetValue(r, byteSeqCol).Trim();
                 string name = table.GetValue(r, nameCol).Trim();
                 string lengthStr = table.GetValue(r, lengthCol).Trim();
+                string startBitStr = startBitCol >= 0 ? table.GetValue(r, startBitCol).Trim() : "";
                 string remarks = remarkCol >= 0 ? table.GetValue(r, remarkCol).Trim() : "";
 
                 if (string.IsNullOrEmpty(byteSeq) && string.IsNullOrEmpty(name))
                     continue;
 
                 string normalizedSeq = NormalizeByteSequence(byteSeq);
-                if (!string.IsNullOrEmpty(normalizedSeq))
+                bool hasExplicitByteSeq = !string.IsNullOrEmpty(normalizedSeq);
+                if (hasExplicitByteSeq)
                     lastByteSeq = normalizedSeq;
 
                 var field = new ProtocolTelemetryField
@@ -96,15 +102,25 @@ namespace DocExtractor.Core.Protocol
                 if (string.IsNullOrEmpty(field.ByteSequence) && !string.IsNullOrEmpty(lastByteSeq))
                     field.ByteSequence = lastByteSeq;
 
+                // If table provides bit offset in a separate column (common for WDxx rows),
+                // treat the "length" column as bit-length and convert to a bit-field.
+                TryApplyBitFieldFromColumns(field, startBitStr);
+
                 ExtractUnit(remarks, name, field);
                 ExtractEnum(remarks, field);
                 ExtractDataType(remarks, field);
                 ClassifySpecialFields(byteSeq, name, field);
 
                 if (string.IsNullOrEmpty(field.FieldName) && field.BitLength == 0
-                    && fields.Count > 0)
+                    && fields.Count > 0 && !hasExplicitByteSeq)
                 {
                     MergeIntoPrevious(fields, field);
+                }
+                else if (string.IsNullOrEmpty(field.FieldName) && field.BitLength == 0
+                    && fields.Count > 0 && hasExplicitByteSeq
+                    && IsCoveredByPreviousField(fields[fields.Count - 1], field))
+                {
+                    // Continuation row (e.g. W6 after W5 with ByteLength=2) — skip
                 }
                 else
                 {
@@ -112,13 +128,188 @@ namespace DocExtractor.Core.Protocol
                 }
             }
 
+            ExpandKnownWholeCodeBitFields(fields);
             return fields;
+        }
+
+        private void TryApplyBitFieldFromColumns(ProtocolTelemetryField field, string startBitStr)
+        {
+            if (field == null) return;
+            if (string.IsNullOrEmpty(startBitStr)) return;
+            if (string.IsNullOrEmpty(field.ByteSequence)) return;
+            if (!field.ByteSequence.StartsWith("WD", StringComparison.OrdinalIgnoreCase)) return;
+            if (field.BitLength > 0) { field.ByteLength = 0; return; }
+
+            int startBit;
+            if (!int.TryParse(startBitStr, out startBit)) return;
+            if (field.ByteLength <= 0) return;
+
+            int bitLen = field.ByteLength;
+            field.BitOffset = startBit;
+            field.BitLength = bitLen;
+            field.ByteLength = 0;
+
+            // Normalize display name to match expected style (b7-b4:xxx / b3:xxx)
+            if (!LooksLikeBitPrefixedName(field.FieldName))
+            {
+                int high = startBit + bitLen - 1;
+                if (bitLen == 1)
+                    field.FieldName = $"b{startBit}:{field.FieldName}";
+                else
+                    field.FieldName = $"b{high}-b{startBit}:{field.FieldName}";
+            }
+        }
+
+        private static bool LooksLikeBitPrefixedName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            return Regex.IsMatch(name.TrimStart(), @"^(?:b|bit)\s*\d+", RegexOptions.IgnoreCase);
+        }
+
+        private void ExpandKnownWholeCodeBitFields(List<ProtocolTelemetryField> fields)
+        {
+            if (fields.Count == 0) return;
+
+            for (int i = 0; i < fields.Count; i++)
+            {
+                var field = fields[i];
+                if (field.BitLength > 0) continue;
+                if (string.IsNullOrEmpty(field.FieldName)) continue;
+
+                int startByte;
+                if (!TryGetByteIndex(field.ByteSequence, out startByte)) continue;
+
+                string name = field.FieldName;
+
+                if (name.Contains("开关状态") && !HasBitChildren(fields, startByte))
+                {
+                    var defs = new (int start, int len, string desc)[]
+                    {
+                        (0, 2, "bit0~bit1：电磁阀 A 的 IO 状态"),
+                        (2, 2, "bit2~bit3：电磁阀 B0的 IO状态"),
+                        (4, 2, "bit4~bit5：电磁阀 B1的 IO状态"),
+                        (6, 2, "bit6~bit7：主份阴极电源的 IO 状态量"),
+                        (8, 2, "bit8~bit9：主份加热电源的 IO 状态量"),
+                        (10, 2, "bit10~bit11：阳极电源 IO 状态量"),
+                        (12, 2, "bit12~bit13：备份阴极电源的 IO 状态量"),
+                        (14, 2, "bit14~bit15：备份加热电源的 IO 状态量"),
+                        (16, 2, "bit16~bit17：主份加热及阴极 VCCS使能引脚"),
+                        (18, 2, "bit18~bit19：备份加热及阴极 VCCS使能引脚"),
+                        (20, 2, "bit20~bit21：PWM信号由单片机 A 提供引脚"),
+                        (22, 2, "bit22~bit23：PWM信号由单片机 B 提供引脚"),
+                        (24, 8, "bit24~bit31：备用"),
+                    };
+                    InsertBitFieldsAfter(fields, i, startByte, defs);
+                    i += defs.Length;
+                    continue;
+                }
+
+                if (name.Contains("系统故障码1") && !HasBitChildren(fields, startByte))
+                {
+                    var defs = new (int start, int len, string desc)[]
+                    {
+                        (0, 1, "系统故障码 1-b0：阴极延时未点着"),
+                        (1, 1, "系统故障码 1-b1：阳极电压异常"),
+                        (2, 1, "系统故障码 1-b2：阳极延时未点着"),
+                        (3, 1, "系统故障码 1-b3：预留"),
+                        (4, 1, "系统故障码 1-b4：低压区压力过低"),
+                        (5, 1, "系统故障码 1-b5：低压区压力过高"),
+                        (6, 1, "系统故障码 1-b6：阳极电流过低"),
+                        (7, 1, "系统故障码 1-b7：阳极电流过高"),
+                    };
+                    InsertBitFieldsAfter(fields, i, startByte, defs);
+                    i += defs.Length;
+                    continue;
+                }
+
+                if (name.Contains("系统故障码2") && !HasBitChildren(fields, startByte))
+                {
+                    var defs = new (int start, int len, string desc)[]
+                    {
+                        (0, 1, "系统故障码 2-b0：阴极震荡"),
+                        (1, 1, "系统故障码 2-b1: 阳极震荡"),
+                    };
+                    InsertBitFieldsAfter(fields, i, startByte, defs);
+                    i += defs.Length;
+                    continue;
+                }
+
+                if (name.Contains("加热电源故障") && !HasBitChildren(fields, startByte))
+                {
+                    var defs = new (int start, int len, string desc)[]
+                    {
+                        (0, 1, "加热电源故障-b0：加热电流过低"),
+                        (1, 1, "加热电源故障-b1：加热电流过高"),
+                        (2, 1, "加热电源故障-b2：加热电压过低"),
+                        (3, 1, "加热电源故障-b3：加热电压过高"),
+                    };
+                    InsertBitFieldsAfter(fields, i, startByte, defs);
+                    i += defs.Length;
+                }
+            }
+        }
+
+        private static bool HasBitChildren(List<ProtocolTelemetryField> fields, int startByte)
+        {
+            for (int i = 0; i < fields.Count; i++)
+            {
+                var f = fields[i];
+                if (f.BitLength <= 0) continue;
+
+                int byteIndex;
+                if (!TryGetByteIndex(f.ByteSequence, out byteIndex)) continue;
+                if (byteIndex == startByte) return true;
+            }
+            return false;
+        }
+
+        private static void InsertBitFieldsAfter(
+            List<ProtocolTelemetryField> fields,
+            int baseIndex,
+            int startByte,
+            (int start, int len, string desc)[] defs)
+        {
+            int insertIndex = baseIndex + 1;
+            for (int i = 0; i < defs.Length; i++)
+            {
+                var def = defs[i];
+                fields.Insert(insertIndex + i, new ProtocolTelemetryField
+                {
+                    ByteSequence = "WD" + startByte,
+                    FieldName = def.desc,
+                    ByteLength = 0,
+                    BitOffset = def.start,
+                    BitLength = def.len,
+                    IsReserved = def.desc.Contains("预留") || def.desc.Contains("备用")
+                });
+            }
+        }
+
+        private bool IsCoveredByPreviousField(ProtocolTelemetryField prev, ProtocolTelemetryField current)
+        {
+            if (prev.IsHeaderField) return false;
+            int prevStart, curStart;
+            if (!TryGetByteIndex(prev.ByteSequence, out prevStart) ||
+                !TryGetByteIndex(current.ByteSequence, out curStart))
+                return false;
+
+            int prevEnd = prevStart + Math.Max(prev.ByteLength, 1);
+            return curStart >= prevStart && curStart < prevEnd;
+        }
+
+        private static bool TryGetByteIndex(string byteSeq, out int index)
+        {
+            index = 0;
+            if (string.IsNullOrEmpty(byteSeq)) return false;
+            var m = Regex.Match(byteSeq, @"(\d+)");
+            return m.Success && int.TryParse(m.Groups[1].Value, out index);
         }
 
         private static void MergeIntoPrevious(List<ProtocolTelemetryField> fields, ProtocolTelemetryField cont)
         {
             var prev = fields[fields.Count - 1];
-            prev.ByteLength += Math.Max(cont.ByteLength, 1);
+            if (cont.ByteLength > 0)
+                prev.ByteLength += cont.ByteLength;
             if (!string.IsNullOrEmpty(cont.Remarks) && string.IsNullOrEmpty(prev.Remarks))
                 prev.Remarks = cont.Remarks;
             if (!string.IsNullOrEmpty(cont.Unit) && string.IsNullOrEmpty(prev.Unit))
@@ -190,6 +381,13 @@ namespace DocExtractor.Core.Protocol
             lengthStr = lengthStr.Trim();
             int val;
             if (int.TryParse(lengthStr, out val))
+            {
+                field.ByteLength = val;
+                return;
+            }
+
+            var m = Regex.Match(lengthStr, @"\d+");
+            if (m.Success && int.TryParse(m.Value, out val))
                 field.ByteLength = val;
         }
 
@@ -204,11 +402,15 @@ namespace DocExtractor.Core.Protocol
             var bitMatch = BitFieldRx.Match(name);
             if (bitMatch.Success)
             {
-                int highBit = int.Parse(bitMatch.Groups[1].Value);
-                int lowBit = int.Parse(bitMatch.Groups[2].Value);
+                int a = int.Parse(bitMatch.Groups[1].Value);
+                int b = int.Parse(bitMatch.Groups[2].Value);
+                int highBit = Math.Max(a, b);
+                int lowBit = Math.Min(a, b);
                 field.BitOffset = lowBit;
-                field.BitLength = highBit - lowBit + 1;
-                string desc = bitMatch.Groups[3].Value.Trim();
+                field.BitLength = Math.Abs(a - b) + 1;
+                string desc = (bitMatch.Groups.Count >= 4 ? bitMatch.Groups[3].Value : "").Trim();
+                if (desc.Length == 0)
+                    desc = name.Trim();
                 field.FieldName = $"b{highBit}-b{lowBit}:{desc}";
                 return;
             }
@@ -219,7 +421,9 @@ namespace DocExtractor.Core.Protocol
                 int bit = int.Parse(singleBitMatch.Groups[1].Value);
                 field.BitOffset = bit;
                 field.BitLength = 1;
-                string desc = singleBitMatch.Groups[2].Value.Trim();
+                string desc = (singleBitMatch.Groups.Count >= 3 ? singleBitMatch.Groups[2].Value : "").Trim();
+                if (desc.Length == 0)
+                    desc = name.Trim();
                 field.FieldName = $"b{bit}:{desc}";
                 return;
             }
@@ -235,10 +439,12 @@ namespace DocExtractor.Core.Protocol
                     var nums = Regex.Matches(prefix, @"\d+");
                     if (nums.Count >= 2)
                     {
-                        int highBit = int.Parse(nums[0].Value);
-                        int lowBit = int.Parse(nums[1].Value);
+                        int a = int.Parse(nums[0].Value);
+                        int b = int.Parse(nums[1].Value);
+                        int highBit = Math.Max(a, b);
+                        int lowBit = Math.Min(a, b);
                         field.BitOffset = lowBit;
-                        field.BitLength = highBit - lowBit + 1;
+                        field.BitLength = Math.Abs(a - b) + 1;
                         field.FieldName = $"b{highBit}-b{lowBit}:{desc}";
                     }
                     else

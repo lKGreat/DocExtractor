@@ -119,16 +119,43 @@ namespace DocExtractor.Data.Export
             int row = 2;
             int seq = 1;
             string prefix = opts.TelemetryCodePrefix ?? result.SystemName;
+            int payloadByteShift = ComputeHeaderByteShift(fields, opts);
+            int checksumByteIndex = ComputeChecksumByteIndex(fields, payloadByteShift);
+
+            // Template mode: hide Dh/Dl but reserve header bytes (W0~Wn) for "数据长度"
+            if (payloadByteShift > 0)
+            {
+                sheet.Cells[row, 1].Value = seq;
+                sheet.Cells[row, 2].Value = result.SystemName;
+                sheet.Cells[row, 3].Value = channel.FrameIdHex;
+                sheet.Cells[row, 4].Value = "W0";
+                sheet.Cells[row, 5].Value = "";
+                sheet.Cells[row, 6].Value = payloadByteShift.ToString();
+                sheet.Cells[row, 7].Value = "数据长度";
+                sheet.Cells[row, 8].Value = $"{prefix}{codeTypeSuffix}-{seq:D4}";
+                sheet.Cells[row, 9].Value = result.DefaultEndianness;
+                sheet.Cells[row, 10].Value = opts.DefaultFormulaType;
+                sheet.Cells[row, 11].Value = opts.DefaultFormulaCoeff;
+                sheet.Cells[row, 12].Value = "";
+                sheet.Cells[row, 13].Value = "";
+                sheet.Cells[row, 14].Value = "";
+                sheet.Cells[row, 15].Value = channel.ChannelLabel;
+
+                row++;
+                seq++;
+            }
 
             foreach (var field in fields)
             {
                 if (field.IsHeaderField && !opts.IncludeHeaderFields) continue;
                 if (field.IsChecksum && !opts.IncludeChecksum) continue;
+                if (string.IsNullOrEmpty(field.FieldName) && field.BitLength == 0
+                    && !field.IsChecksum && !field.IsReserved) continue;
 
                 sheet.Cells[row, 1].Value = seq;
                 sheet.Cells[row, 2].Value = result.SystemName;
                 sheet.Cells[row, 3].Value = channel.FrameIdHex;
-                sheet.Cells[row, 4].Value = FormatStartByte(field);
+                sheet.Cells[row, 4].Value = FormatStartByte(field, payloadByteShift, checksumByteIndex);
                 sheet.Cells[row, 5].Value = FormatBitOffset(field);
                 sheet.Cells[row, 6].Value = FormatLength(field);
                 sheet.Cells[row, 7].Value = field.FieldName;
@@ -169,6 +196,41 @@ namespace DocExtractor.Data.Export
             sheet.View.FreezePanes(2, 1);
             if (row > 2)
                 sheet.Cells[1, 1, 1, headers.Length].AutoFilter = true;
+        }
+
+        /// <summary>
+        /// Returns the header byte length to use as payload shift.
+        /// Rule: if Dh exists, use Dh.ByteLength as the total header bytes (ignore Dl).
+        /// This matches templates where Dh already represents the full data-length field size.
+        /// Fallback: if Dh is absent, sum other header fields.
+        /// </summary>
+        private int ComputeHeaderByteShift(List<ProtocolTelemetryField> fields, ExportOptions opts)
+        {
+            int dhLen = 0;
+            int fallbackTotal = 0;
+
+            foreach (var field in fields)
+            {
+                if (!field.IsHeaderField) continue;
+                string seq = (field.ByteSequence ?? "").Trim().ToUpperInvariant();
+
+                if (seq == "DH")
+                {
+                    dhLen = Math.Max(field.ByteLength, 1);
+                    continue;
+                }
+
+                if (seq == "DL")
+                {
+                    fallbackTotal += Math.Max(field.ByteLength, 1);
+                    continue;
+                }
+
+                fallbackTotal += Math.Max(field.ByteLength, 1);
+            }
+
+            if (dhLen > 0) return dhLen;
+            return fallbackTotal;
         }
 
         private void WriteApidQueueSheet(ExcelPackage package, List<ChannelInfo> channels, string systemName)
@@ -245,14 +307,57 @@ namespace DocExtractor.Data.Export
             sheet.Column(4).Width = 14;
         }
 
-        private string FormatStartByte(ProtocolTelemetryField field)
+        private string FormatStartByte(ProtocolTelemetryField field, int payloadByteShift, int checksumByteIndex = -1)
         {
+            if (field.IsChecksum && checksumByteIndex >= 0)
+                return "W" + checksumByteIndex;
+
+            int byteIndex = 0;
+            string rawSeq = (field.ByteSequence ?? "").Trim();
+            bool prefersWdPrefix = rawSeq.StartsWith("WD", StringComparison.OrdinalIgnoreCase);
+
+            bool canShift = payloadByteShift > 0
+                && !field.IsHeaderField
+                && !field.IsChecksum
+                && TryGetStartByteIndex(field.ByteSequence, out byteIndex);
+            if (canShift)
+                byteIndex += payloadByteShift;
+
             if (field.BitOffset >= 0 && field.BitLength > 0)
+            {
+                if (canShift) return "WD" + byteIndex;
                 return "WD" + ExtractByteNumber(field.ByteSequence);
+            }
             string seq = field.ByteSequence;
             if (!string.IsNullOrEmpty(seq) && seq.Contains("-"))
+            {
+                if (canShift) return (prefersWdPrefix ? "WD" : "W") + byteIndex;
                 return "W" + ExtractByteNumber(seq);
+            }
+            if (canShift) return (prefersWdPrefix ? "WD" : "W") + byteIndex;
             return seq;
+        }
+
+        private int ComputeChecksumByteIndex(List<ProtocolTelemetryField> fields, int payloadByteShift)
+        {
+            int maxEnd = payloadByteShift;
+            foreach (var field in fields)
+            {
+                if (field.IsHeaderField || field.IsChecksum) continue;
+
+                int startByte;
+                if (!TryGetStartByteIndex(field.ByteSequence, out startByte)) continue;
+
+                int byteSpan;
+                if (field.BitLength > 0)
+                    byteSpan = (field.BitOffset + field.BitLength + 7) / 8;
+                else
+                    byteSpan = Math.Max(field.ByteLength, 1);
+
+                int end = startByte + payloadByteShift + byteSpan;
+                if (end > maxEnd) maxEnd = end;
+            }
+            return maxEnd;
         }
 
         private string FormatBitOffset(ProtocolTelemetryField field)
@@ -272,12 +377,21 @@ namespace DocExtractor.Data.Export
         private string ExtractByteNumber(string byteSeq)
         {
             if (string.IsNullOrEmpty(byteSeq)) return byteSeq;
-            var cleaned = byteSeq.Replace("W", "").Replace("w", "")
-                                  .Replace("B", "").Replace("b", "");
-            var dashIdx = cleaned.IndexOf('-');
-            if (dashIdx > 0)
-                cleaned = cleaned.Substring(0, dashIdx);
-            return cleaned;
+            var m = System.Text.RegularExpressions.Regex.Match(byteSeq, @"(\d+)");
+            return m.Success ? m.Groups[1].Value : byteSeq;
+        }
+
+        private bool TryGetStartByteIndex(string byteSeq, out int index)
+        {
+            index = 0;
+            if (string.IsNullOrEmpty(byteSeq))
+                return false;
+
+            var m = System.Text.RegularExpressions.Regex.Match(byteSeq, @"(\d+)");
+            if (!m.Success)
+                return false;
+
+            return int.TryParse(m.Groups[1].Value, out index);
         }
 
         private void SetHeaderCell(ExcelWorksheet sheet, int row, int col, string text)
