@@ -86,8 +86,8 @@ namespace DocExtractor.UI.Controls
             };
             _trainHint = new Label
             {
-                Dock = DockStyle.Right,
-                Width = 240,
+                Width = 200,
+                Height = 30,
                 TextAlign = ContentAlignment.MiddleRight,
                 ForeColor = NlpLabTheme.TextTertiary
             };
@@ -95,32 +95,47 @@ namespace DocExtractor.UI.Controls
             {
                 Text = "快速训练",
                 Width = 90,
-                Height = 28,
-                Dock = DockStyle.Right
+                Height = 28
             });
             _quickTrainBtn.Click += (s, e) => QuickTrainRequested?.Invoke();
             _openTrainingCenterBtn = NlpLabTheme.MakeDefault(new Button
             {
                 Text = "训练中心",
                 Width = 90,
-                Height = 28,
-                Dock = DockStyle.Right
+                Height = 28
             });
             _openTrainingCenterBtn.Click += (s, e) => OpenTrainingCenterRequested?.Invoke();
 
-            var flow = new FlowLayoutPanel
+            var leftFlow = new FlowLayoutPanel
             {
                 Dock = DockStyle.Left,
+                Width = 310,
+                AutoSize = false,
+                WrapContents = false,
                 FlowDirection = FlowDirection.LeftToRight,
-                AutoSize = true
+                Padding = new Padding(0)
             };
-            flow.Controls.Add(modeLabel);
-            flow.Controls.Add(_modeCombo);
-            topBar.Controls.Add(_trainHint);
-            topBar.Controls.Add(_quickTrainBtn);
-            topBar.Controls.Add(_openTrainingCenterBtn);
+            leftFlow.Controls.Add(modeLabel);
+            leftFlow.Controls.Add(_modeCombo);
+
+            var rightFlow = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Right,
+                AutoSize = false,
+                Width = 440,
+                WrapContents = false,
+                FlowDirection = FlowDirection.RightToLeft,
+                Padding = new Padding(0)
+            };
+            rightFlow.Controls.Add(_trainHint);
+            rightFlow.Controls.Add(_quickTrainBtn);
+            rightFlow.Controls.Add(_openTrainingCenterBtn);
+
+            _templateInfo.Dock = DockStyle.Fill;
+
             topBar.Controls.Add(_templateInfo);
-            topBar.Controls.Add(flow);
+            topBar.Controls.Add(rightFlow);
+            topBar.Controls.Add(leftFlow);
 
             _editorHost = new Panel { Dock = DockStyle.Fill };
 

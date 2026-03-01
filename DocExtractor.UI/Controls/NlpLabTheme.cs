@@ -1,4 +1,7 @@
+using System;
 using System.Drawing;
+using System.Drawing.Text;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace DocExtractor.UI.Controls
@@ -26,16 +29,45 @@ namespace DocExtractor.UI.Controls
         public static readonly Color NavActiveFg    = Color.White;
 
         // ── Fonts ───────────────────────────────────────────────────────────
-        private const string FontFamily = "微软雅黑";
+        private static readonly string ResolvedFontFamily = ResolveFontFamily("微软雅黑", "Microsoft YaHei", "Segoe UI");
+        private static readonly string ResolvedMonoFamily = ResolveFontFamily("Consolas", "Courier New", "Lucida Console");
 
-        public static readonly Font Title         = new Font(FontFamily, 11F, FontStyle.Bold);
-        public static readonly Font SectionTitle   = new Font(FontFamily, 9.5F, FontStyle.Bold);
-        public static readonly Font Body           = new Font(FontFamily, 9F);
-        public static readonly Font BodyBold       = new Font(FontFamily, 9F, FontStyle.Bold);
-        public static readonly Font Small          = new Font(FontFamily, 8.5F);
-        public static readonly Font TextInput      = new Font(FontFamily, 10F);
-        public static readonly Font TextResult     = new Font(FontFamily, 10.5F);
-        public static readonly Font Mono           = new Font("Consolas", 9F);
+        public static readonly Font Title         = SafeFont(ResolvedFontFamily, 11F, FontStyle.Bold);
+        public static readonly Font SectionTitle   = SafeFont(ResolvedFontFamily, 9.5F, FontStyle.Bold);
+        public static readonly Font Body           = SafeFont(ResolvedFontFamily, 9F);
+        public static readonly Font BodyBold       = SafeFont(ResolvedFontFamily, 9F, FontStyle.Bold);
+        public static readonly Font Small          = SafeFont(ResolvedFontFamily, 8.5F);
+        public static readonly Font TextInput      = SafeFont(ResolvedFontFamily, 10F);
+        public static readonly Font TextResult     = SafeFont(ResolvedFontFamily, 10.5F);
+        public static readonly Font Mono           = SafeFont(ResolvedMonoFamily, 9F);
+
+        private static string ResolveFontFamily(params string[] candidates)
+        {
+            using (var fonts = new InstalledFontCollection())
+            {
+                var installed = new System.Collections.Generic.HashSet<string>(
+                    fonts.Families.Select(f => f.Name), StringComparer.OrdinalIgnoreCase);
+                foreach (var name in candidates)
+                {
+                    if (installed.Contains(name)) return name;
+                }
+            }
+            return SystemFonts.DefaultFont.FontFamily.Name;
+        }
+
+        private static Font SafeFont(string family, float size, FontStyle style = FontStyle.Regular)
+        {
+            try
+            {
+                var font = new Font(family, Math.Max(size, 1F), style);
+                font.ToHfont();
+                return font;
+            }
+            catch
+            {
+                return new Font(SystemFonts.DefaultFont.FontFamily, Math.Max(size, 1F), style);
+            }
+        }
 
         // ── Button Helpers ──────────────────────────────────────────────────
 

@@ -25,23 +25,28 @@ namespace DocExtractor.UI.Controls
         public event Action<LearningSessionResult>? TrainingCompletedDetailed;
 
         // ── 控件字段 ─────────────────────────────────────────────────────────
-        private Label _statsLabel         = null!;
-        private Label _qualityLabel       = null!;
-        private DataGridView _queueGrid   = null!;
-        private RichTextBox _annotateBox  = null!;
-        private DataGridView _editGrid    = null!;
+        private Label _statsLabel          = null!;
+        private Label _qualityLabel        = null!;
+        private TabControl _leftTabs       = null!;
+        private DataGridView _queueGrid    = null!;
+        private DataGridView _verifiedGrid = null!;
+        private Button _refreshQueueBtn    = null!;
+        private Button _deleteVerifiedBtn  = null!;
+        private RichTextBox _annotateBox   = null!;
+        private DataGridView _editGrid     = null!;
         private Button _confirmAnnotateBtn = null!;
-        private Button _skipBtn           = null!;
-        private Button _refreshQueueBtn   = null!;
-        private Button _trainBtn          = null!;
-        private Button _cancelTrainBtn    = null!;
+        private Button _skipBtn            = null!;
+        private Button _trainBtn           = null!;
+        private Button _cancelTrainBtn     = null!;
         private ProgressBar _trainProgress = null!;
-        private RichTextBox _trainLog     = null!;
-        private Label _trainStatusLabel   = null!;
-        private ComboBox _presetCombo     = null!;
+        private RichTextBox _trainLog      = null!;
+        private Label _trainStatusLabel    = null!;
+        private ComboBox _presetCombo      = null!;
 
         private List<NlpUncertainEntry> _queue = new List<NlpUncertainEntry>();
         private NlpUncertainEntry? _currentEntry;
+        private List<NlpAnnotatedText> _verifiedSamples = new List<NlpAnnotatedText>();
+        private NlpAnnotatedText? _currentVerified;
         private List<ActiveEntityAnnotation> _currentAnnotations = new List<ActiveEntityAnnotation>();
 
         public NlpActiveLearningPanel(ActiveLearningEngine engine, NlpScenario scenario)
@@ -56,12 +61,14 @@ namespace DocExtractor.UI.Controls
             _scenario = scenario;
             RefreshStats();
             LoadQueue();
+            LoadVerifiedSamples();
         }
 
         public void OnActivated()
         {
             RefreshStats();
             LoadQueue();
+            LoadVerifiedSamples();
         }
 
         public bool CanStartTraining => _engine.GetVerifiedCount(_scenario.Id) >= _engine.MinSamplesForTraining;
@@ -111,6 +118,7 @@ namespace DocExtractor.UI.Controls
         {
             var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 0, 4, 0) };
 
+            // ── 统计栏 ──
             var statsBar = new Panel { Dock = DockStyle.Top, Height = 56, Padding = new Padding(0, 4, 0, 4) };
 
             _statsLabel = new Label
@@ -121,7 +129,6 @@ namespace DocExtractor.UI.Controls
                 Font      = NlpLabTheme.Body,
                 ForeColor = NlpLabTheme.TextPrimary
             };
-
             _qualityLabel = new Label
             {
                 Text      = "当前 F1: — | Precision: — | Recall: —",
@@ -130,33 +137,35 @@ namespace DocExtractor.UI.Controls
                 Font      = NlpLabTheme.Small,
                 ForeColor = NlpLabTheme.TextTertiary
             };
-
             statsBar.Controls.Add(_qualityLabel);
             statsBar.Controls.Add(_statsLabel);
 
-            var queueBar = new Panel { Dock = DockStyle.Top, Height = 36, Padding = new Padding(0, 4, 0, 0) };
+            // ── TabControl：不确定性队列 + 已标注样本 ──
+            _leftTabs = new TabControl { Dock = DockStyle.Fill };
 
-            var queueTitle = new Label
-            {
-                Text      = "不确定性队列（模型最需要学习的文本）",
-                Dock      = DockStyle.Left,
-                Width     = 260,
-                Height    = 28,
-                Font      = NlpLabTheme.SectionTitle,
-                ForeColor = NlpLabTheme.TextPrimary,
-                TextAlign = ContentAlignment.MiddleLeft
-            };
+            var tabQueue    = new TabPage("不确定性队列");
+            var tabVerified = new TabPage("已标注样本");
 
+            // --- 不确定性队列 tab ---
+            var queueToolBar = new Panel { Dock = DockStyle.Top, Height = 30, Padding = new Padding(0, 2, 0, 0) };
             _refreshQueueBtn = NlpLabTheme.MakeDefault(new Button
             {
-                Text   = "刷新队列",
-                Width  = 80,
-                Height = 28,
+                Text   = "刷新",
+                Width  = 60,
+                Height = 24,
                 Dock   = DockStyle.Right
             });
             _refreshQueueBtn.Click += (s, e) => LoadQueue();
-            queueBar.Controls.Add(_refreshQueueBtn);
-            queueBar.Controls.Add(queueTitle);
+            var queueHint = new Label
+            {
+                Text      = "模型最不确定的文本（需先导入文本）",
+                Dock      = DockStyle.Fill,
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextTertiary,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            queueToolBar.Controls.Add(_refreshQueueBtn);
+            queueToolBar.Controls.Add(queueHint);
 
             _queueGrid = new DataGridView { Dock = DockStyle.Fill };
             NlpLabTheme.StyleGrid(_queueGrid);
@@ -164,8 +173,56 @@ namespace DocExtractor.UI.Controls
             BuildQueueColumns();
             _queueGrid.SelectionChanged += OnQueueSelectionChanged;
 
-            panel.Controls.Add(_queueGrid);
-            panel.Controls.Add(queueBar);
+            tabQueue.Controls.Add(_queueGrid);
+            tabQueue.Controls.Add(queueToolBar);
+
+            // --- 已标注样本 tab ---
+            var verifiedToolBar = new Panel { Dock = DockStyle.Top, Height = 30, Padding = new Padding(0, 2, 0, 0) };
+            _deleteVerifiedBtn = NlpLabTheme.MakeDanger(new Button
+            {
+                Text    = "删除",
+                Width   = 60,
+                Height  = 24,
+                Dock    = DockStyle.Right,
+                Enabled = false
+            });
+            _deleteVerifiedBtn.Click += OnDeleteVerified;
+            var verifiedRefreshBtn = NlpLabTheme.MakeDefault(new Button
+            {
+                Text   = "刷新",
+                Width  = 60,
+                Height = 24,
+                Dock   = DockStyle.Right
+            });
+            verifiedRefreshBtn.Click += (s, e) => LoadVerifiedSamples();
+            var verifiedHint = new Label
+            {
+                Text      = "点击行可重新编辑标注",
+                Dock      = DockStyle.Fill,
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextTertiary,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            verifiedToolBar.Controls.Add(_deleteVerifiedBtn);
+            verifiedToolBar.Controls.Add(verifiedRefreshBtn);
+            verifiedToolBar.Controls.Add(verifiedHint);
+
+            _verifiedGrid = new DataGridView { Dock = DockStyle.Fill };
+            NlpLabTheme.StyleGrid(_verifiedGrid);
+            _verifiedGrid.Font = NlpLabTheme.Small;
+            _verifiedGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Text",     HeaderText = "文本摘要",   FillWeight = 55, ReadOnly = true });
+            _verifiedGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Entities", HeaderText = "实体数",     FillWeight = 15, ReadOnly = true });
+            _verifiedGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Source",   HeaderText = "来源",       FillWeight = 15, ReadOnly = true });
+            _verifiedGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Created",  HeaderText = "时间",       FillWeight = 15, ReadOnly = true });
+            _verifiedGrid.SelectionChanged += OnVerifiedSelectionChanged;
+
+            tabVerified.Controls.Add(_verifiedGrid);
+            tabVerified.Controls.Add(verifiedToolBar);
+
+            _leftTabs.TabPages.Add(tabQueue);
+            _leftTabs.TabPages.Add(tabVerified);
+
+            panel.Controls.Add(_leftTabs);
             panel.Controls.Add(statsBar);
             return panel;
         }
@@ -378,6 +435,72 @@ namespace DocExtractor.UI.Controls
             RefreshStats();
         }
 
+        private void LoadVerifiedSamples()
+        {
+            _verifiedSamples = _engine.GetAnnotatedTexts(_scenario.Id, verifiedOnly: true);
+            _verifiedGrid.Rows.Clear();
+
+            foreach (var sample in _verifiedSamples)
+            {
+                string preview = sample.RawText.Length > 60
+                    ? sample.RawText.Substring(0, 57) + "..."
+                    : sample.RawText;
+                int entityCount = 0;
+                try
+                {
+                    var anns = JsonConvert.DeserializeObject<List<ActiveEntityAnnotation>>(sample.AnnotationsJson);
+                    entityCount = anns?.Count ?? 0;
+                }
+                catch { }
+                string created = sample.CreatedAt.Length >= 16
+                    ? sample.CreatedAt.Substring(5, 11)
+                    : sample.CreatedAt;
+                _verifiedGrid.Rows.Add(preview, entityCount, sample.Source, created);
+            }
+
+            // 切换到"已标注样本"Tab 以提醒用户（仅当队列为空时）
+            if (_verifiedSamples.Count > 0 && _queue.Count == 0 && _leftTabs != null)
+                _leftTabs.SelectedIndex = 1;
+        }
+
+        private void OnVerifiedSelectionChanged(object sender, EventArgs e)
+        {
+            if (_verifiedGrid.CurrentRow == null) return;
+            int idx = _verifiedGrid.CurrentRow.Index;
+            if (idx < 0 || idx >= _verifiedSamples.Count) return;
+
+            _currentVerified = _verifiedSamples[idx];
+            _currentEntry    = null;
+
+            _annotateBox.Text = _currentVerified.RawText;
+            _currentAnnotations = DeserializeAnnotations(_currentVerified.AnnotationsJson);
+            RefreshEditGrid();
+
+            _confirmAnnotateBtn.Enabled = true;
+            _skipBtn.Enabled            = false;
+            _deleteVerifiedBtn.Enabled  = true;
+        }
+
+        private void OnDeleteVerified(object sender, EventArgs e)
+        {
+            if (_currentVerified == null) return;
+            string preview = _currentVerified.RawText.Length > 60
+                ? _currentVerified.RawText.Substring(0, 60) + "..."
+                : _currentVerified.RawText;
+            if (MessageBox.Show($"确定删除该标注样本？\n\n{preview}",
+                "确认删除", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                return;
+
+            _engine.DeleteAnnotatedText(_currentVerified.Id);
+            _currentVerified = null;
+            _annotateBox.Clear();
+            _editGrid.Rows.Clear();
+            _confirmAnnotateBtn.Enabled = false;
+            _deleteVerifiedBtn.Enabled  = false;
+            LoadVerifiedSamples();
+            RefreshStats();
+        }
+
         private void RefreshStats()
         {
             int verified = _engine.GetVerifiedCount(_scenario.Id);
@@ -432,7 +555,8 @@ namespace DocExtractor.UI.Controls
 
         private void OnConfirmAnnotation(object sender, EventArgs e)
         {
-            if (_currentEntry == null) return;
+            string rawText = _currentEntry?.RawText ?? _currentVerified?.RawText ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(rawText)) return;
 
             var confirmed = new List<ActiveEntityAnnotation>();
             foreach (DataGridViewRow row in _editGrid.Rows)
@@ -454,34 +578,42 @@ namespace DocExtractor.UI.Controls
                 }
             }
 
-            if (!ValidateConfirmedAnnotations(_currentEntry.RawText, confirmed, out string error))
+            if (!ValidateConfirmedAnnotations(rawText, confirmed, out string error))
             {
                 MessageBox.Show(error, "标注校验失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            _engine.SubmitCorrection(
-                _currentEntry.RawText,
-                confirmed,
-                _scenario.Id,
-                _currentEntry.MinConfidence,
-                _currentEntry.Id);
-
-            AppendLog($"✓ 已标注：{_currentEntry.RawText.Substring(0, Math.Min(40, _currentEntry.RawText.Length))}...");
-
-            int rowIdx = _queueGrid.CurrentRow?.Index ?? -1;
-            if (rowIdx >= 0 && rowIdx < _queue.Count)
+            if (_currentEntry != null)
             {
-                _queue.RemoveAt(rowIdx);
-                _queueGrid.Rows.RemoveAt(rowIdx);
+                // 来自不确定性队列
+                _engine.SubmitCorrection(rawText, confirmed, _scenario.Id,
+                    _currentEntry.MinConfidence, _currentEntry.Id);
+
+                AppendLog($"✓ 已标注（队列）：{rawText.Substring(0, Math.Min(40, rawText.Length))}...");
+
+                int rowIdx = _queueGrid.CurrentRow?.Index ?? -1;
+                if (rowIdx >= 0 && rowIdx < _queue.Count)
+                {
+                    _queue.RemoveAt(rowIdx);
+                    _queueGrid.Rows.RemoveAt(rowIdx);
+                }
+                _currentEntry = null;
+            }
+            else if (_currentVerified != null)
+            {
+                // 来自已标注样本（重新标注）
+                _engine.SubmitCorrection(rawText, confirmed, _scenario.Id, 1f);
+                AppendLog($"✓ 已更新标注：{rawText.Substring(0, Math.Min(40, rawText.Length))}...");
+                _currentVerified = null;
+                LoadVerifiedSamples();
             }
 
-            _currentEntry = null;
             _annotateBox.Clear();
             _editGrid.Rows.Clear();
             _confirmAnnotateBtn.Enabled = false;
             _skipBtn.Enabled            = false;
-
+            _deleteVerifiedBtn.Enabled  = false;
             RefreshStats();
         }
 

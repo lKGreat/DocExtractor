@@ -23,7 +23,7 @@ namespace DocExtractor.Data.ActiveLearning
         private readonly UncertaintySampler _sampler;
 
         /// <summary>最小训练样本阈值</summary>
-        public int MinSamplesForTraining { get; set; } = 20;
+        public int MinSamplesForTraining { get; set; } = 5;
 
         /// <summary>每次新增多少条样本后建议训练</summary>
         public int TrainTriggerBatchSize { get; set; } = 20;
@@ -338,6 +338,18 @@ namespace DocExtractor.Data.ActiveLearning
         {
             using var repo = new ActiveLearningRepository(_dbPath);
             return repo.GetAnnotatedTextCount(scenarioId);
+        }
+
+        public List<NlpAnnotatedText> GetAnnotatedTexts(int scenarioId, bool verifiedOnly = false)
+        {
+            using var repo = new ActiveLearningRepository(_dbPath);
+            return repo.GetAnnotatedTexts(scenarioId, verifiedOnly);
+        }
+
+        public void DeleteAnnotatedText(int id)
+        {
+            using var repo = new ActiveLearningRepository(_dbPath);
+            repo.DeleteAnnotatedText(id);
         }
 
         public int GetVerifiedCount(int scenarioId)

@@ -65,7 +65,7 @@ namespace DocExtractor.UI.Forms
 
         private void InitializeComponent()
         {
-            this.Text          = "NLP 主动学习实验室";
+            this.Text          = "NLP 主动学习实验室 v2.1";
             this.Size          = new Size(1280, 860);
             this.MinimumSize   = new Size(1000, 680);
             this.StartPosition = FormStartPosition.CenterScreen;
@@ -193,9 +193,10 @@ namespace DocExtractor.UI.Forms
 
             var tabFlow = new FlowLayoutPanel
             {
-                Dock          = DockStyle.Left,
-                AutoSize      = true,
+                Dock          = DockStyle.Fill,
+                AutoSize      = false,
                 FlowDirection = FlowDirection.LeftToRight,
+                WrapContents  = false,
                 Padding       = new Padding(0, 4, 0, 0)
             };
 
