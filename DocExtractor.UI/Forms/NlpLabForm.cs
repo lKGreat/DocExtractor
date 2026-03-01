@@ -29,12 +29,13 @@ namespace DocExtractor.UI.Forms
         private Button   _deleteScenarioBtn  = null!;
         private Button   _importTextsBtn     = null!;
         private Label    _statusBar          = null!;
+        private Label    _modelStatusLabel   = null!;
 
-        private Panel   _navPanel     = null!;
-        private Button  _navAnalysisBtn   = null!;
-        private Button  _navLearningBtn   = null!;
-        private Button  _navDashboardBtn  = null!;
-        private Panel   _contentPanel = null!;
+        private Panel   _tabBar        = null!;
+        private Button  _tabAnalysis   = null!;
+        private Button  _tabLearning   = null!;
+        private Button  _tabDashboard  = null!;
+        private Panel   _contentPanel  = null!;
 
         private NlpTextAnalysisPanel?    _analysisPanel;
         private NlpActiveLearningPanel?  _learningPanel;
@@ -59,15 +60,15 @@ namespace DocExtractor.UI.Forms
 
         private void InitializeComponent()
         {
-            this.Text            = "NLP 主动学习实验室";
-            this.Size            = new Size(1280, 860);
-            this.MinimumSize     = new Size(1000, 680);
-            this.StartPosition   = FormStartPosition.CenterScreen;
-            this.Font            = new Font("微软雅黑", 9F);
-            this.BackColor       = Color.FromArgb(245, 247, 250);
+            this.Text          = "NLP 主动学习实验室";
+            this.Size          = new Size(1280, 860);
+            this.MinimumSize   = new Size(1000, 680);
+            this.StartPosition = FormStartPosition.CenterScreen;
+            this.Font          = NlpLabTheme.Body;
+            this.BackColor     = NlpLabTheme.BgBody;
 
             BuildToolbar();
-            BuildNavPanel();
+            BuildTabBar();
             BuildContentArea();
             BuildStatusBar();
         }
@@ -78,29 +79,27 @@ namespace DocExtractor.UI.Forms
             {
                 Dock      = DockStyle.Top,
                 Height    = 52,
-                BackColor = Color.FromArgb(255, 255, 255),
-                Padding   = new Padding(10, 8, 10, 8)
+                BackColor = NlpLabTheme.BgToolbar,
+                Padding   = new Padding(12, 8, 12, 8)
             };
 
-            // 左侧 Logo 标题
             var logoLabel = new Label
             {
-                Text      = "🧠 NLP 主动学习实验室",
+                Text      = "NLP 主动学习实验室",
                 Dock      = DockStyle.Left,
-                Width     = 200,
+                Width     = 180,
                 Height    = 36,
-                Font      = new Font("微软雅黑", 11F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(24, 144, 255),
+                Font      = NlpLabTheme.Title,
+                ForeColor = NlpLabTheme.Primary,
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
-            // 场景选择区
             var scenarioBar = new FlowLayoutPanel
             {
                 Dock          = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
-                Padding       = new Padding(0, 0, 0, 0),
-                AutoSize      = false
+                AutoSize      = false,
+                Padding       = new Padding(8, 0, 0, 0)
             };
 
             var scenarioLabel = new Label
@@ -109,7 +108,7 @@ namespace DocExtractor.UI.Forms
                 Width     = 42,
                 Height    = 34,
                 TextAlign = ContentAlignment.MiddleRight,
-                Font      = new Font("微软雅黑", 9F)
+                Font      = NlpLabTheme.Body
             };
 
             _scenarioCombo = new ComboBox
@@ -117,39 +116,33 @@ namespace DocExtractor.UI.Forms
                 Width         = 180,
                 Height        = 34,
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Font          = new Font("微软雅黑", 9F)
+                Font          = NlpLabTheme.Body
             };
             _scenarioCombo.SelectedIndexChanged += OnScenarioChanged;
 
-            _newScenarioBtn = new Button
+            _newScenarioBtn = NlpLabTheme.MakeDefault(new Button
             {
-                Text      = "+ 新建场景",
-                Width     = 90,
-                Height    = 32,
-                FlatStyle = FlatStyle.Flat,
-                Font      = new Font("微软雅黑", 8.5F)
-            };
+                Text   = "+ 新建场景",
+                Width  = 90,
+                Height = 32
+            });
             _newScenarioBtn.Click += OnNewScenario;
 
-            _deleteScenarioBtn = new Button
+            _deleteScenarioBtn = NlpLabTheme.MakeGhost(new Button
             {
-                Text      = "删除场景",
-                Width     = 80,
-                Height    = 32,
-                FlatStyle = FlatStyle.Flat,
-                Font      = new Font("微软雅黑", 8.5F),
-                Enabled   = false
-            };
+                Text    = "删除场景",
+                Width   = 80,
+                Height  = 32,
+                Enabled = false
+            });
             _deleteScenarioBtn.Click += OnDeleteScenario;
 
-            _importTextsBtn = new Button
+            _importTextsBtn = NlpLabTheme.MakeDefault(new Button
             {
-                Text      = "导入文本",
-                Width     = 80,
-                Height    = 32,
-                FlatStyle = FlatStyle.Flat,
-                Font      = new Font("微软雅黑", 8.5F)
-            };
+                Text   = "导入文本",
+                Width  = 80,
+                Height = 32
+            });
             _importTextsBtn.Click += OnImportTexts;
 
             scenarioBar.Controls.AddRange(new Control[] {
@@ -162,64 +155,64 @@ namespace DocExtractor.UI.Forms
             this.Controls.Add(toolbar);
         }
 
-        private void BuildNavPanel()
+        private void BuildTabBar()
         {
-            _navPanel = new Panel
+            _tabBar = new Panel
             {
-                Dock      = DockStyle.Left,
-                Width     = 100,
-                BackColor = Color.FromArgb(40, 44, 52),
-                Padding   = new Padding(6, 8, 6, 8)
+                Dock      = DockStyle.Top,
+                Height    = 40,
+                BackColor = NlpLabTheme.BgToolbar,
+                Padding   = new Padding(12, 0, 12, 0)
             };
 
-            _navAnalysisBtn = CreateNavBtn("文本分析");
-            _navAnalysisBtn.Click += (s, e) => ShowPage(0);
-
-            _navLearningBtn = CreateNavBtn("主动学习");
-            _navLearningBtn.Click += (s, e) => ShowPage(1);
-
-            _navDashboardBtn = CreateNavBtn("质量仪表盘");
-            _navDashboardBtn.Click += (s, e) => ShowPage(2);
-
-            // 底部提示
-            var modelStatus = new Label
+            var tabFlow = new FlowLayoutPanel
             {
-                Text      = _nerModel.IsLoaded ? "● 模型已加载" : "○ 模型未加载",
+                Dock          = DockStyle.Left,
+                AutoSize      = true,
+                FlowDirection = FlowDirection.LeftToRight,
+                Padding       = new Padding(0, 4, 0, 0)
+            };
+
+            _tabAnalysis  = CreateTabButton("文本分析");
+            _tabLearning  = CreateTabButton("主动学习");
+            _tabDashboard = CreateTabButton("质量仪表盘");
+
+            _tabAnalysis.Click  += (s, e) => ShowPage(0);
+            _tabLearning.Click  += (s, e) => ShowPage(1);
+            _tabDashboard.Click += (s, e) => ShowPage(2);
+
+            tabFlow.Controls.AddRange(new Control[] { _tabAnalysis, _tabLearning, _tabDashboard });
+
+            // separator line at the bottom
+            var separator = new Panel
+            {
                 Dock      = DockStyle.Bottom,
-                Height    = 28,
-                Font      = new Font("微软雅黑", 7.5F),
-                ForeColor = _nerModel.IsLoaded ? Color.LightGreen : Color.Orange,
-                TextAlign = ContentAlignment.MiddleCenter
+                Height    = 1,
+                BackColor = NlpLabTheme.Border
             };
 
-            _navPanel.Controls.Add(modelStatus);
-            _navPanel.Controls.Add(_navDashboardBtn);
-            _navPanel.Controls.Add(_navLearningBtn);
-            _navPanel.Controls.Add(_navAnalysisBtn);
+            _tabBar.Controls.Add(tabFlow);
+            _tabBar.Controls.Add(separator);
 
-            this.Controls.Add(_navPanel);
+            this.Controls.Add(_tabBar);
         }
 
-        private static Button CreateNavBtn(string text)
+        private static Button CreateTabButton(string text)
         {
             var btn = new Button
             {
                 Text      = text,
-                Dock      = DockStyle.Top,
-                Height    = 52,
-                Margin    = new Padding(0, 0, 0, 4),
+                Width     = 100,
+                Height    = 32,
+                Margin    = new Padding(0, 0, 2, 0),
                 FlatStyle = FlatStyle.Flat,
-                Font      = new Font("微软雅黑", 8.5F),
-                ForeColor = Color.FromArgb(180, 180, 180),
-                BackColor = Color.Transparent
+                Font      = NlpLabTheme.Body,
+                ForeColor = NlpLabTheme.TextSecondary,
+                BackColor = Color.Transparent,
+                Cursor    = Cursors.Hand
             };
             btn.FlatAppearance.BorderSize = 0;
-            btn.MouseEnter += (s, e) => ((Button)s!).ForeColor = Color.White;
-            btn.MouseLeave += (s, e) =>
-            {
-                var b = (Button)s!;
-                if (b.Tag as string != "active") b.ForeColor = Color.FromArgb(180, 180, 180);
-            };
+            btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(230, 244, 255);
             return btn;
         }
 
@@ -228,7 +221,7 @@ namespace DocExtractor.UI.Forms
             _contentPanel = new Panel
             {
                 Dock      = DockStyle.Fill,
-                BackColor = Color.FromArgb(245, 247, 250),
+                BackColor = NlpLabTheme.BgBody,
                 Padding   = new Padding(0)
             };
             this.Controls.Add(_contentPanel);
@@ -240,14 +233,37 @@ namespace DocExtractor.UI.Forms
             {
                 Dock      = DockStyle.Bottom,
                 Height    = 26,
-                Font      = new Font("微软雅黑", 8.5F),
-                ForeColor = Color.FromArgb(100, 100, 100),
-                BackColor = Color.FromArgb(240, 240, 240),
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextTertiary,
+                BackColor = NlpLabTheme.BgStatusBar,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Padding   = new Padding(8, 0, 0, 0),
                 Text      = "就绪"
             };
-            this.Controls.Add(_statusBar);
+
+            _modelStatusLabel = new Label
+            {
+                Dock      = DockStyle.Right,
+                Width     = 140,
+                Height    = 26,
+                Font      = NlpLabTheme.Small,
+                ForeColor = _nerModel.IsLoaded ? Color.FromArgb(82, 196, 26) : Color.DarkOrange,
+                BackColor = NlpLabTheme.BgStatusBar,
+                TextAlign = ContentAlignment.MiddleRight,
+                Padding   = new Padding(0, 0, 12, 0),
+                Text      = _nerModel.IsLoaded ? "● 模型已加载" : "○ 模型未加载"
+            };
+
+            var statusPanel = new Panel
+            {
+                Dock      = DockStyle.Bottom,
+                Height    = 26,
+                BackColor = NlpLabTheme.BgStatusBar
+            };
+            statusPanel.Controls.Add(_modelStatusLabel);
+            statusPanel.Controls.Add(_statusBar);
+
+            this.Controls.Add(statusPanel);
         }
 
         // ── 场景管理 ─────────────────────────────────────────────────────────
@@ -276,16 +292,20 @@ namespace DocExtractor.UI.Forms
             _activeScenario = _scenarios[idx];
             _deleteScenarioBtn.Enabled = !_activeScenario.IsBuiltIn;
 
-            // 重建面板（场景切换时重新创建，确保数据绑定正确）
-            _analysisPanel  = null;
-            _learningPanel  = null;
-            _dashboardPanel = null;
+            DisposePanel(ref _analysisPanel);
+            DisposePanel(ref _learningPanel);
+            DisposePanel(ref _dashboardPanel);
 
-            // 显示当前已激活的页面
             int page = GetActivePage();
             ShowPage(page, force: true);
 
             UpdateStatus($"已切换到场景：{_activeScenario.Name}（{_activeScenario.EntityTypes.Count} 种实体类型）");
+        }
+
+        private static void DisposePanel<T>(ref T? panel) where T : Control
+        {
+            panel?.Dispose();
+            panel = null;
         }
 
         private void OnNewScenario(object sender, EventArgs e)
@@ -295,7 +315,6 @@ namespace DocExtractor.UI.Forms
 
             int id = _scenarioMgr.CreateScenario(dlg.ScenarioName, dlg.Description, dlg.EntityTypes);
             ReloadScenarioCombo();
-            // 选中新建的场景
             for (int i = 0; i < _scenarios.Count; i++)
             {
                 if (_scenarios[i].Id == id) { _scenarioCombo.SelectedIndex = i; break; }
@@ -319,9 +338,9 @@ namespace DocExtractor.UI.Forms
 
             using var ofd = new OpenFileDialog
             {
-                Title           = "选择文本文件（每行一条）",
-                Filter          = "文本文件 (*.txt)|*.txt|所有文件|*.*",
-                Multiselect     = false
+                Title       = "选择文本文件（每行一条）",
+                Filter      = "文本文件 (*.txt)|*.txt|所有文件|*.*",
+                Multiselect = false
             };
             if (ofd.ShowDialog() != DialogResult.OK) return;
 
@@ -333,7 +352,6 @@ namespace DocExtractor.UI.Forms
                     "导入完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 UpdateStatus($"已导入 {count} 条文本到主动学习队列");
 
-                // 刷新主动学习面板
                 _learningPanel?.OnActivated();
             }
             catch (Exception ex)
@@ -352,7 +370,7 @@ namespace DocExtractor.UI.Forms
             if (page == _currentPage && !force) return;
             _currentPage = page;
 
-            HighlightNavBtn(page);
+            HighlightTab(page);
 
             Control pageControl = page switch
             {
@@ -376,8 +394,8 @@ namespace DocExtractor.UI.Forms
         private int GetActivePage()
         {
             if (_activeControl == _analysisPanel)  return 0;
-            if (_activeControl == _learningPanel)   return 1;
-            if (_activeControl == _dashboardPanel)  return 2;
+            if (_activeControl == _learningPanel)  return 1;
+            if (_activeControl == _dashboardPanel) return 2;
             return 0;
         }
 
@@ -415,15 +433,15 @@ namespace DocExtractor.UI.Forms
             return _dashboardPanel;
         }
 
-        private void HighlightNavBtn(int page)
+        private void HighlightTab(int page)
         {
-            var buttons = new[] { _navAnalysisBtn, _navLearningBtn, _navDashboardBtn };
-            for (int i = 0; i < buttons.Length; i++)
+            var tabs = new[] { _tabAnalysis, _tabLearning, _tabDashboard };
+            for (int i = 0; i < tabs.Length; i++)
             {
                 bool active = i == page;
-                buttons[i].BackColor = active ? Color.FromArgb(24, 144, 255) : Color.Transparent;
-                buttons[i].ForeColor = active ? Color.White : Color.FromArgb(180, 180, 180);
-                buttons[i].Tag       = active ? "active" : "";
+                tabs[i].ForeColor = active ? NlpLabTheme.Primary : NlpLabTheme.TextSecondary;
+                tabs[i].Font      = active ? NlpLabTheme.BodyBold : NlpLabTheme.Body;
+                tabs[i].BackColor = active ? Color.FromArgb(230, 244, 255) : Color.Transparent;
             }
         }
 
@@ -453,9 +471,9 @@ namespace DocExtractor.UI.Forms
         public string       Description  { get; private set; } = string.Empty;
         public List<string> EntityTypes  { get; private set; } = new List<string>();
 
-        private TextBox   _nameBox    = null!;
-        private TextBox   _descBox    = null!;
-        private TextBox   _typesBox   = null!;
+        private TextBox _nameBox  = null!;
+        private TextBox _descBox  = null!;
+        private TextBox _typesBox = null!;
 
         public NewScenarioDialog()
         {
@@ -465,7 +483,7 @@ namespace DocExtractor.UI.Forms
             StartPosition   = FormStartPosition.CenterParent;
             MaximizeBox     = false;
             MinimizeBox     = false;
-            Font            = new Font("微软雅黑", 9F);
+            Font            = NlpLabTheme.Body;
 
             var layout = new TableLayoutPanel
             {
@@ -482,8 +500,8 @@ namespace DocExtractor.UI.Forms
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
 
-            _nameBox = new TextBox { Dock = DockStyle.Fill };
-            _descBox = new TextBox { Dock = DockStyle.Fill };
+            _nameBox  = new TextBox { Dock = DockStyle.Fill };
+            _descBox  = new TextBox { Dock = DockStyle.Fill };
             _typesBox = new TextBox
             {
                 Dock       = DockStyle.Fill,
@@ -496,22 +514,18 @@ namespace DocExtractor.UI.Forms
             {
                 Text      = "实体类型：每行一个，将作为标签显示在提取结果中",
                 Dock      = DockStyle.Fill,
-                Font      = new Font("微软雅黑", 8F),
-                ForeColor = Color.Gray,
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextTertiary,
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
-            var okBtn = new Button
+            var okBtn = NlpLabTheme.MakePrimary(new Button
             {
                 Text         = "创建",
                 DialogResult = DialogResult.OK,
-                BackColor    = Color.FromArgb(24, 144, 255),
-                ForeColor    = Color.White,
-                FlatStyle    = FlatStyle.Flat,
                 Width        = 80,
                 Height       = 32
-            };
-            okBtn.FlatAppearance.BorderSize = 0;
+            });
             okBtn.Click += (s, e) =>
             {
                 ScenarioName = _nameBox.Text.Trim();
@@ -528,15 +542,26 @@ namespace DocExtractor.UI.Forms
                 { MessageBox.Show("至少需要一种实体类型", "提示"); DialogResult = DialogResult.None; }
             };
 
-            var cancelBtn = new Button { Text = "取消", DialogResult = DialogResult.Cancel, FlatStyle = FlatStyle.Flat };
+            var cancelBtn = NlpLabTheme.MakeGhost(new Button
+            {
+                Text         = "取消",
+                DialogResult = DialogResult.Cancel,
+                Width        = 80,
+                Height       = 32
+            });
             var btnPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
             btnPanel.Controls.AddRange(new Control[] { cancelBtn, okBtn });
 
-            layout.Controls.Add(new Label { Text = "场景名称", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }); layout.Controls.Add(_nameBox);
-            layout.Controls.Add(new Label { Text = "描述",     TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }); layout.Controls.Add(_descBox);
-            layout.Controls.Add(new Label { Text = "实体类型", TextAlign = ContentAlignment.TopRight, Dock = DockStyle.Fill, Padding = new Padding(0, 6, 0, 0) }); layout.Controls.Add(_typesBox);
-            layout.Controls.Add(new Label()); layout.Controls.Add(hint);
-            layout.Controls.Add(new Label()); layout.Controls.Add(btnPanel);
+            layout.Controls.Add(new Label { Text = "场景名称", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill });
+            layout.Controls.Add(_nameBox);
+            layout.Controls.Add(new Label { Text = "描述", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill });
+            layout.Controls.Add(_descBox);
+            layout.Controls.Add(new Label { Text = "实体类型", TextAlign = ContentAlignment.TopRight, Dock = DockStyle.Fill, Padding = new Padding(0, 6, 0, 0) });
+            layout.Controls.Add(_typesBox);
+            layout.Controls.Add(new Label());
+            layout.Controls.Add(hint);
+            layout.Controls.Add(new Label());
+            layout.Controls.Add(btnPanel);
 
             this.Controls.Add(layout);
             this.AcceptButton = okBtn;

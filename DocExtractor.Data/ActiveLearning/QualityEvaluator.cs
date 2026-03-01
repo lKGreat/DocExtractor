@@ -128,6 +128,7 @@ namespace DocExtractor.Data.ActiveLearning
             double f1        = (precision + recall) > 0 ? 2 * precision * recall / (precision + recall) : 0;
 
             var perTypeF1 = new Dictionary<string, double>();
+            var perTypeSupport = new Dictionary<string, int>();
             foreach (var type in tp.Keys)
             {
                 int tpT = tp[type];
@@ -136,15 +137,21 @@ namespace DocExtractor.Data.ActiveLearning
                 double p = (tpT + fpT) > 0 ? (double)tpT / (tpT + fpT) : 0;
                 double r = (tpT + fnT) > 0 ? (double)tpT / (tpT + fnT) : 0;
                 perTypeF1[type] = (p + r) > 0 ? 2 * p * r / (p + r) : 0;
+                perTypeSupport[type] = tpT + fnT;
             }
+
+            double macroF1 = perTypeF1.Count == 0 ? 0 : perTypeF1.Values.Average();
 
             return new NlpQualityMetrics
             {
                 F1          = Math.Round(f1, 4),
+                MicroF1     = Math.Round(f1, 4),
+                MacroF1     = Math.Round(macroF1, 4),
                 Precision   = Math.Round(precision, 4),
                 Recall      = Math.Round(recall, 4),
                 SampleCount = sampleCount,
-                PerTypeF1   = perTypeF1
+                PerTypeF1   = perTypeF1,
+                PerTypeSupport = perTypeSupport
             };
         }
 

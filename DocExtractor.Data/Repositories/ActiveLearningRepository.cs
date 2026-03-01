@@ -62,12 +62,17 @@ namespace DocExtractor.Data.Repositories
     /// <summary>质量指标快照</summary>
     public class NlpQualityMetrics
     {
+        /// <summary>统一主指标（兼容旧字段，等价于 MicroF1）</summary>
         public double F1 { get; set; }
+        public double MicroF1 { get; set; }
+        public double MacroF1 { get; set; }
         public double Precision { get; set; }
         public double Recall { get; set; }
         public int SampleCount { get; set; }
         /// <summary>每个实体类型的分项 F1：EntityType -> F1</summary>
         public Dictionary<string, double> PerTypeF1 { get; set; } = new Dictionary<string, double>();
+        /// <summary>每个实体类型在 gold 标注中的支持度：EntityType -> Count</summary>
+        public Dictionary<string, int> PerTypeSupport { get; set; } = new Dictionary<string, int>();
     }
 
     /// <summary>不确定性队列条目：模型不确定、需要人工标注的文本</summary>
@@ -81,6 +86,9 @@ namespace DocExtractor.Data.Repositories
         /// <summary>最低置信度（最不确定的 token 分数）</summary>
         public float MinConfidence { get; set; }
         public bool IsReviewed { get; set; }
+        public bool IsSkipped { get; set; }
+        public string SkipReason { get; set; } = string.Empty;
+        public string ReviewedAt { get; set; } = string.Empty;
         public string CreatedAt { get; set; } = string.Empty;
     }
 
@@ -141,11 +149,19 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
     PredictionsJson TEXT    NOT NULL DEFAULT '[]',
     MinConfidence   REAL    NOT NULL DEFAULT 1,
     IsReviewed      INTEGER NOT NULL DEFAULT 0,
+    IsSkipped       INTEGER NOT NULL DEFAULT 0,
+    SkipReason      TEXT    NOT NULL DEFAULT '',
+    ReviewedAt      TEXT    NULL,
     CreatedAt       TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
 ";
             using var cmd = new SQLiteCommand(sql, _conn);
             cmd.ExecuteNonQuery();
+
+            // 兼容已存在数据库：补齐新增列
+            TryAddColumn("NlpUncertainQueue", "IsSkipped", "INTEGER NOT NULL DEFAULT 0");
+            TryAddColumn("NlpUncertainQueue", "SkipReason", "TEXT NOT NULL DEFAULT ''");
+            TryAddColumn("NlpUncertainQueue", "ReviewedAt", "TEXT NULL");
         }
 
         // ── 场景管理 ─────────────────────────────────────────────────────────
@@ -329,7 +345,9 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
         public void AddUncertainEntry(NlpUncertainEntry entry)
         {
             using var cmd = new SQLiteCommand(
-                "INSERT INTO NlpUncertainQueue (ScenarioId, RawText, PredictionsJson, MinConfidence) VALUES (@s,@t,@p,@c)",
+                "INSERT INTO NlpUncertainQueue (ScenarioId, RawText, PredictionsJson, MinConfidence) " +
+                "SELECT @s,@t,@p,@c WHERE NOT EXISTS (" +
+                "SELECT 1 FROM NlpUncertainQueue WHERE ScenarioId=@s AND RawText=@t)",
                 _conn);
             cmd.Parameters.AddWithValue("@s", entry.ScenarioId);
             cmd.Parameters.AddWithValue("@t", entry.RawText);
@@ -341,7 +359,7 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
         public List<NlpUncertainEntry> GetUncertainQueue(int scenarioId, int topN = 50)
         {
             using var cmd = new SQLiteCommand(
-                "SELECT Id, ScenarioId, RawText, PredictionsJson, MinConfidence, IsReviewed, CreatedAt " +
+                "SELECT Id, ScenarioId, RawText, PredictionsJson, MinConfidence, IsReviewed, IsSkipped, SkipReason, ReviewedAt, CreatedAt " +
                 "FROM NlpUncertainQueue WHERE ScenarioId=@s AND IsReviewed=0 ORDER BY MinConfidence ASC LIMIT @n",
                 _conn);
             cmd.Parameters.AddWithValue("@s", scenarioId);
@@ -358,15 +376,22 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
                     PredictionsJson = r.GetString(3),
                     MinConfidence = (float)r.GetDouble(4),
                     IsReviewed = r.GetInt32(5) == 1,
-                    CreatedAt = r.GetString(6)
+                    IsSkipped = r.GetInt32(6) == 1,
+                    SkipReason = r.IsDBNull(7) ? "" : r.GetString(7),
+                    ReviewedAt = r.IsDBNull(8) ? "" : r.GetString(8),
+                    CreatedAt = r.GetString(9)
                 });
             }
             return result;
         }
 
-        public void MarkUncertainReviewed(int id)
+        public void MarkUncertainReviewed(int id, bool isSkipped = false, string skipReason = "")
         {
-            using var cmd = new SQLiteCommand("UPDATE NlpUncertainQueue SET IsReviewed=1 WHERE Id=@id", _conn);
+            using var cmd = new SQLiteCommand(
+                "UPDATE NlpUncertainQueue SET IsReviewed=1, IsSkipped=@skip, SkipReason=@reason, ReviewedAt=datetime('now','localtime') WHERE Id=@id",
+                _conn);
+            cmd.Parameters.AddWithValue("@skip", isSkipped ? 1 : 0);
+            cmd.Parameters.AddWithValue("@reason", skipReason ?? string.Empty);
             cmd.Parameters.AddWithValue("@id", id);
             cmd.ExecuteNonQuery();
         }
@@ -388,6 +413,19 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
             using var cmd = new SQLiteCommand(sql, _conn);
             cmd.Parameters.AddWithValue("@s", scenarioId);
             return cmd.ExecuteScalar();
+        }
+
+        private void TryAddColumn(string tableName, string columnName, string sqlType)
+        {
+            try
+            {
+                using var cmd = new SQLiteCommand($"ALTER TABLE {tableName} ADD COLUMN {columnName} {sqlType}", _conn);
+                cmd.ExecuteNonQuery();
+            }
+            catch
+            {
+                // 已存在则忽略
+            }
         }
 
         public void Dispose() => _conn?.Dispose();

@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using DocExtractor.Data.ActiveLearning;
 using DocExtractor.Data.Repositories;
-using Newtonsoft.Json;
 
 namespace DocExtractor.UI.Controls
 {
@@ -19,10 +19,10 @@ namespace DocExtractor.UI.Controls
         private NlpScenario _scenario;
         private Dictionary<string, Color> _entityColors = new Dictionary<string, Color>();
 
-        // 当前预测的实体列表（用户可编辑）
         private List<ActiveEntityAnnotation> _currentEntities = new List<ActiveEntityAnnotation>();
         private string _currentText = string.Empty;
         private float _currentConfidence;
+        private bool _isPlaceholder = true;
 
         public event Action? AnnotationSubmitted;
 
@@ -30,6 +30,7 @@ namespace DocExtractor.UI.Controls
         private RichTextBox _inputBox = null!;
         private Button _extractBtn = null!;
         private Button _clearBtn = null!;
+        private Button _tagSelectionBtn = null!;
         private RichTextBox _resultBox = null!;
         private DataGridView _entityGrid = null!;
         private Button _addEntityBtn = null!;
@@ -37,7 +38,8 @@ namespace DocExtractor.UI.Controls
         private Button _submitBtn = null!;
         private Label _confidenceLabel = null!;
         private Label _hintLabel = null!;
-        private Panel _legendPanel = null!;
+        private FlowLayoutPanel _legendPanel = null!;
+        private ContextMenuStrip _tagContextMenu = null!;
 
         public NlpTextAnalysisPanel(ActiveLearningEngine engine, NlpScenario scenario)
         {
@@ -48,9 +50,10 @@ namespace DocExtractor.UI.Controls
 
         public void SetScenario(NlpScenario scenario)
         {
-            _scenario      = scenario;
-            _entityColors  = ScenarioManager.GetEntityColors(scenario);
+            _scenario     = scenario;
+            _entityColors = ScenarioManager.GetEntityColors(scenario);
             RebuildLegend();
+            RebuildTagContextMenu();
             ClearAll();
         }
 
@@ -60,33 +63,30 @@ namespace DocExtractor.UI.Controls
         {
             this.Dock    = DockStyle.Fill;
             this.Padding = new Padding(8);
-            this.Font    = new Font("微软雅黑", 9F);
+            this.Font    = NlpLabTheme.Body;
 
             _entityColors = ScenarioManager.GetEntityColors(_scenario);
 
-            // 主分割：上（输入+结果）下（实体列表）
             var mainSplit = new SplitContainer
             {
-                Dock         = DockStyle.Fill,
-                Orientation  = Orientation.Horizontal,
-                SplitterDistance = 300,
-                Panel1MinSize = 180,
-                Panel2MinSize = 160
+                Dock        = DockStyle.Fill,
+                Orientation = Orientation.Horizontal,
+                Height      = 800
             };
+            NlpLabTheme.SetSplitterDistanceDeferred(mainSplit, 0.6, panel1Min: 180, panel2Min: 140);
 
-            // ── 上半：左（输入）右（结果）
             var topSplit = new SplitContainer
             {
-                Dock             = DockStyle.Fill,
-                Orientation      = Orientation.Vertical,
-                SplitterDistance = 450
+                Dock        = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                Width       = 1200
             };
+            NlpLabTheme.SetSplitterDistanceDeferred(topSplit, 0.45, panel1Min: 240, panel2Min: 300);
 
             topSplit.Panel1.Controls.Add(BuildInputSection());
             topSplit.Panel2.Controls.Add(BuildResultSection());
             mainSplit.Panel1.Controls.Add(topSplit);
 
-            // ── 下半：实体列表编辑
             mainSplit.Panel2.Controls.Add(BuildEntitySection());
 
             this.Controls.Add(mainSplit);
@@ -100,28 +100,34 @@ namespace DocExtractor.UI.Controls
             {
                 Text      = "输入文本（支持粘贴整段文章）",
                 Dock      = DockStyle.Top,
-                Height    = 24,
-                Font      = new Font("微软雅黑", 9F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(60, 60, 60)
+                Height    = 26,
+                Font      = NlpLabTheme.SectionTitle,
+                ForeColor = NlpLabTheme.TextPrimary,
+                TextAlign = ContentAlignment.MiddleLeft
             };
 
             _inputBox = new RichTextBox
             {
-                Dock         = DockStyle.Fill,
-                Font         = new Font("微软雅黑", 10F),
-                ScrollBars   = RichTextBoxScrollBars.Vertical,
-                BorderStyle  = BorderStyle.FixedSingle,
-                AcceptsTab   = true
+                Dock        = DockStyle.Fill,
+                Font        = NlpLabTheme.TextInput,
+                ScrollBars  = RichTextBoxScrollBars.Vertical,
+                BorderStyle = BorderStyle.FixedSingle,
+                AcceptsTab  = true
             };
-            _inputBox.Text = "请在此处输入或粘贴文本，支持单句、段落或整篇文章...";
-            _inputBox.ForeColor = Color.Gray;
+            SetPlaceholder();
             _inputBox.GotFocus += (s, e) =>
             {
-                if (_inputBox.Text == "请在此处输入或粘贴文本，支持单句、段落或整篇文章...")
+                if (_isPlaceholder)
                 {
-                    _inputBox.Text = "";
-                    _inputBox.ForeColor = Color.Black;
+                    _inputBox.Text      = "";
+                    _inputBox.ForeColor = NlpLabTheme.TextPrimary;
+                    _isPlaceholder      = false;
                 }
+            };
+            _inputBox.LostFocus += (s, e) =>
+            {
+                if (string.IsNullOrWhiteSpace(_inputBox.Text))
+                    SetPlaceholder();
             };
 
             var btnPanel = new FlowLayoutPanel
@@ -132,40 +138,43 @@ namespace DocExtractor.UI.Controls
                 Padding       = new Padding(0, 4, 0, 0)
             };
 
-            _extractBtn = new Button
+            _extractBtn = NlpLabTheme.MakePrimary(new Button
             {
-                Text      = "提取实体",
-                Width     = 90,
-                Height    = 30,
-                BackColor = Color.FromArgb(24, 144, 255),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Font      = new Font("微软雅黑", 9F)
-            };
-            _extractBtn.FlatAppearance.BorderSize = 0;
+                Text   = "提取实体",
+                Width  = 90,
+                Height = 30
+            });
             _extractBtn.Click += OnExtract;
 
-            _clearBtn = new Button
+            _tagSelectionBtn = NlpLabTheme.MakeDefault(new Button
             {
-                Text      = "清空",
-                Width     = 60,
-                Height    = 30,
-                FlatStyle = FlatStyle.Flat,
-                Font      = new Font("微软雅黑", 9F)
-            };
+                Text   = "标记选中文本",
+                Width  = 100,
+                Height = 30
+            });
+            _tagSelectionBtn.Click += OnTagSelection;
+
+            _clearBtn = NlpLabTheme.MakeGhost(new Button
+            {
+                Text   = "清空",
+                Width  = 60,
+                Height = 30
+            });
             _clearBtn.Click += (s, e) => ClearAll();
 
             _confidenceLabel = new Label
             {
                 Text      = "",
-                Width     = 200,
+                Width     = 250,
                 Height    = 30,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Font      = new Font("微软雅黑", 8.5F),
-                ForeColor = Color.FromArgb(100, 100, 100)
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextTertiary
             };
 
-            btnPanel.Controls.AddRange(new Control[] { _extractBtn, _clearBtn, _confidenceLabel });
+            btnPanel.Controls.AddRange(new Control[] { _extractBtn, _tagSelectionBtn, _clearBtn, _confidenceLabel });
+
+            RebuildTagContextMenu();
 
             panel.Controls.Add(_inputBox);
             panel.Controls.Add(btnPanel);
@@ -184,9 +193,10 @@ namespace DocExtractor.UI.Controls
                 Text      = "提取结果（实体高亮显示）",
                 Dock      = DockStyle.Left,
                 Width     = 200,
-                Height    = 24,
-                Font      = new Font("微软雅黑", 9F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(60, 60, 60)
+                Height    = 26,
+                Font      = NlpLabTheme.SectionTitle,
+                ForeColor = NlpLabTheme.TextPrimary,
+                TextAlign = ContentAlignment.MiddleLeft
             };
 
             _legendPanel = new FlowLayoutPanel
@@ -203,11 +213,11 @@ namespace DocExtractor.UI.Controls
             _resultBox = new RichTextBox
             {
                 Dock        = DockStyle.Fill,
-                Font        = new Font("微软雅黑", 10.5F),
+                Font        = NlpLabTheme.TextResult,
                 ReadOnly    = true,
                 ScrollBars  = RichTextBoxScrollBars.Vertical,
                 BorderStyle = BorderStyle.FixedSingle,
-                BackColor   = Color.FromArgb(250, 250, 250)
+                BackColor   = NlpLabTheme.BgInput
             };
 
             _hintLabel = new Label
@@ -215,8 +225,8 @@ namespace DocExtractor.UI.Controls
                 Text      = "点击\"提取实体\"按钮，模型将在此处以彩色高亮显示识别到的实体",
                 Dock      = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter,
-                ForeColor = Color.Gray,
-                Font      = new Font("微软雅黑", 9.5F),
+                ForeColor = NlpLabTheme.TextTertiary,
+                Font      = NlpLabTheme.Body,
                 Visible   = true
             };
 
@@ -235,53 +245,44 @@ namespace DocExtractor.UI.Controls
         {
             var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 0) };
 
-            var topBar = new Panel { Dock = DockStyle.Top, Height = 32 };
+            var topBar = new Panel { Dock = DockStyle.Top, Height = 34 };
 
             var title = new Label
             {
                 Text      = "实体列表（可添加 / 删除 / 修改类型，然后提交校正）",
                 Dock      = DockStyle.Left,
                 Width     = 400,
-                Height    = 28,
-                Font      = new Font("微软雅黑", 9F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(60, 60, 60),
+                Height    = 30,
+                Font      = NlpLabTheme.SectionTitle,
+                ForeColor = NlpLabTheme.TextPrimary,
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
-            _addEntityBtn = new Button
+            _addEntityBtn = NlpLabTheme.MakeDefault(new Button
             {
-                Text      = "+ 添加实体",
-                Width     = 90,
-                Height    = 28,
-                FlatStyle = FlatStyle.Flat,
-                Font      = new Font("微软雅黑", 8.5F),
-                Dock      = DockStyle.Right
-            };
+                Text   = "+ 添加实体",
+                Width  = 90,
+                Height = 28,
+                Dock   = DockStyle.Right
+            });
             _addEntityBtn.Click += OnAddEntity;
 
-            _deleteEntityBtn = new Button
+            _deleteEntityBtn = NlpLabTheme.MakeGhost(new Button
             {
-                Text      = "删除选中",
-                Width     = 80,
-                Height    = 28,
-                FlatStyle = FlatStyle.Flat,
-                Font      = new Font("微软雅黑", 8.5F),
-                Dock      = DockStyle.Right
-            };
+                Text   = "删除选中",
+                Width  = 80,
+                Height = 28,
+                Dock   = DockStyle.Right
+            });
             _deleteEntityBtn.Click += OnDeleteEntity;
 
-            _submitBtn = new Button
+            _submitBtn = NlpLabTheme.MakeSuccess(new Button
             {
-                Text      = "✓ 提交校正",
-                Width     = 100,
-                Height    = 28,
-                BackColor = Color.FromArgb(82, 196, 26),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Font      = new Font("微软雅黑", 9F, FontStyle.Bold),
-                Dock      = DockStyle.Right
-            };
-            _submitBtn.FlatAppearance.BorderSize = 0;
+                Text   = "✓ 提交校正",
+                Width  = 100,
+                Height = 28,
+                Dock   = DockStyle.Right
+            });
             _submitBtn.Click += OnSubmitCorrection;
 
             topBar.Controls.Add(_submitBtn);
@@ -289,22 +290,8 @@ namespace DocExtractor.UI.Controls
             topBar.Controls.Add(_addEntityBtn);
             topBar.Controls.Add(title);
 
-            _entityGrid = new DataGridView
-            {
-                Dock                   = DockStyle.Fill,
-                AllowUserToAddRows     = false,
-                AllowUserToDeleteRows  = false,
-                RowHeadersVisible      = false,
-                SelectionMode          = DataGridViewSelectionMode.FullRowSelect,
-                MultiSelect            = false,
-                AutoSizeColumnsMode    = DataGridViewAutoSizeColumnsMode.Fill,
-                BorderStyle            = BorderStyle.None,
-                Font                   = new Font("微软雅黑", 9F),
-                GridColor              = Color.FromArgb(220, 220, 220),
-                BackgroundColor        = Color.White,
-                ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
-                ColumnHeadersHeight    = 30
-            };
+            _entityGrid = new DataGridView { Dock = DockStyle.Fill };
+            NlpLabTheme.StyleGrid(_entityGrid);
             BuildEntityGridColumns();
 
             panel.Controls.Add(_entityGrid);
@@ -356,24 +343,76 @@ namespace DocExtractor.UI.Controls
                 var chip = new Label
                 {
                     Text      = kv.Key,
-                    AutoSize  = false,
-                    Width     = 70,
+                    AutoSize  = true,
                     Height    = 20,
                     Margin    = new Padding(2),
+                    Padding   = new Padding(6, 0, 6, 0),
                     TextAlign = ContentAlignment.MiddleCenter,
                     BackColor = kv.Value,
-                    Font      = new Font("微软雅黑", 8F)
+                    Font      = NlpLabTheme.Small
                 };
                 _legendPanel.Controls.Add(chip);
             }
         }
 
+        private void RebuildTagContextMenu()
+        {
+            _tagContextMenu = new ContextMenuStrip { Font = NlpLabTheme.Body };
+            _tagContextMenu.Items.Clear();
+            foreach (var kv in _entityColors)
+            {
+                var type = kv.Key;
+                var color = kv.Value;
+                var item = new ToolStripMenuItem(type) { BackColor = color };
+                item.Click += (s, e) => TagSelectedText(type);
+                _tagContextMenu.Items.Add(item);
+            }
+        }
+
+        // ── 文本选择标注 ─────────────────────────────────────────────────────
+
+        private void OnTagSelection(object sender, EventArgs e)
+        {
+            if (_inputBox.SelectionLength == 0)
+            {
+                MessageBox.Show("请先在输入框中选中要标记的文本", "提示",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            _tagContextMenu.Show(_tagSelectionBtn, new Point(0, _tagSelectionBtn.Height));
+        }
+
+        private void TagSelectedText(string entityType)
+        {
+            string text = _inputBox.SelectedText;
+            int start   = _inputBox.SelectionStart;
+            int end     = start + text.Length - 1;
+
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            var entity = new ActiveEntityAnnotation
+            {
+                Text       = text,
+                EntityType = entityType,
+                StartIndex = start,
+                EndIndex   = end,
+                Confidence = 1f,
+                IsManual   = true
+            };
+
+            _currentEntities.Add(entity);
+            _currentText = _inputBox.Text;
+            _hintLabel.Visible = false;
+            RefreshEntityGrid();
+            RenderHighlightedResult();
+        }
+
         // ── 提取逻辑 ─────────────────────────────────────────────────────────
 
-        private void OnExtract(object sender, EventArgs e)
+        private async void OnExtract(object sender, EventArgs e)
         {
             string text = _inputBox.Text.Trim();
-            if (string.IsNullOrWhiteSpace(text) || text == "请在此处输入或粘贴文本，支持单句、段落或整篇文章...")
+            if (string.IsNullOrWhiteSpace(text) || _isPlaceholder)
             {
                 MessageBox.Show("请先输入文本", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
@@ -384,7 +423,9 @@ namespace DocExtractor.UI.Controls
 
             try
             {
-                var result = _engine.Predict(text, _scenario);
+                var scenario = _scenario;
+                var result = await Task.Run(() => _engine.Predict(text, scenario));
+
                 _currentText       = text;
                 _currentEntities   = new List<ActiveEntityAnnotation>(result.Entities);
                 _currentConfidence = result.AvgConfidence;
@@ -395,8 +436,11 @@ namespace DocExtractor.UI.Controls
 
                 string modelStatus = result.ModelLoaded ? "ML 模型" : "规则引擎";
                 _confidenceLabel.Text = $"{modelStatus} | 实体 {result.Entities.Count} 个 | 置信度 {result.AvgConfidence:P0}";
-                _confidenceLabel.ForeColor = result.AvgConfidence >= 0.9f ? Color.Green
-                    : result.AvgConfidence >= 0.7f ? Color.DarkOrange : Color.Red;
+                _confidenceLabel.ForeColor = result.AvgConfidence >= 0.9f
+                    ? Color.FromArgb(82, 196, 26)
+                    : result.AvgConfidence >= 0.7f
+                        ? Color.DarkOrange
+                        : NlpLabTheme.Danger;
             }
             catch (Exception ex)
             {
@@ -414,7 +458,6 @@ namespace DocExtractor.UI.Controls
             _resultBox.Clear();
             if (string.IsNullOrEmpty(_currentText)) return;
 
-            // 按起始位置排序，依次着色
             var sorted = _currentEntities.OrderBy(e => e.StartIndex).ToList();
 
             int cursor = 0;
@@ -424,18 +467,16 @@ namespace DocExtractor.UI.Controls
                 int end   = Math.Min(_currentText.Length - 1, entity.EndIndex);
 
                 if (start > cursor)
-                {
-                    AppendRtf(_currentText.Substring(cursor, start - cursor), Color.Black, Color.White);
-                }
+                    AppendRtf(_currentText.Substring(cursor, start - cursor), NlpLabTheme.TextPrimary, Color.White);
 
                 Color bgColor = _entityColors.TryGetValue(entity.EntityType, out var c) ? c : Color.LightYellow;
-                AppendRtf(entity.Text, Color.Black, bgColor);
+                AppendRtf(entity.Text, NlpLabTheme.TextPrimary, bgColor);
 
                 cursor = end + 1;
             }
 
             if (cursor < _currentText.Length)
-                AppendRtf(_currentText.Substring(cursor), Color.Black, Color.White);
+                AppendRtf(_currentText.Substring(cursor), NlpLabTheme.TextPrimary, Color.White);
         }
 
         private void AppendRtf(string text, Color fg, Color bg)
@@ -482,8 +523,11 @@ namespace DocExtractor.UI.Controls
 
         private void OnAddEntity(object sender, EventArgs e)
         {
-            // 弹窗让用户指定实体文本和类型
-            using var dlg = new AddEntityDialog(_scenario.EntityTypes, _currentText);
+            int selStart  = _inputBox.SelectionStart;
+            int selLength = _inputBox.SelectionLength;
+            string selText = _inputBox.SelectedText;
+
+            using var dlg = new AddEntityDialog(_scenario.EntityTypes, _currentText, selText, selStart, selLength);
             if (dlg.ShowDialog() != DialogResult.OK) return;
 
             var entity = new ActiveEntityAnnotation
@@ -496,6 +540,8 @@ namespace DocExtractor.UI.Controls
                 IsManual   = true
             };
             _currentEntities.Add(entity);
+            _currentText = _inputBox.Text;
+            _hintLabel.Visible = false;
             RefreshEntityGrid();
             RenderHighlightedResult();
         }
@@ -536,21 +582,29 @@ namespace DocExtractor.UI.Controls
             ClearAll();
         }
 
+        // ── Helpers ─────────────────────────────────────────────────────────
+
+        private void SetPlaceholder()
+        {
+            _isPlaceholder      = true;
+            _inputBox.Text      = "请在此处输入或粘贴文本，支持单句、段落或整篇文章...";
+            _inputBox.ForeColor = NlpLabTheme.TextTertiary;
+        }
+
         private void ClearAll()
         {
-            _inputBox.Text      = "请在此处输入或粘贴文本，支持单句、段落或整篇文章...";
-            _inputBox.ForeColor = Color.Gray;
+            SetPlaceholder();
             _resultBox.Clear();
             _currentEntities.Clear();
-            _currentText        = string.Empty;
-            _currentConfidence  = 0f;
+            _currentText       = string.Empty;
+            _currentConfidence = 0f;
             _entityGrid.Rows.Clear();
             _confidenceLabel.Text = "";
             _hintLabel.Visible    = true;
         }
     }
 
-    // ── 添加实体对话框 ────────────────────────────────────────────────────────
+    // ── 添加实体对话框（已改造：优先使用选区，无需手动输入索引）──────────────
 
     internal class AddEntityDialog : Form
     {
@@ -559,68 +613,113 @@ namespace DocExtractor.UI.Controls
         public int    StartIndex  { get; private set; }
         public int    EndIndex    { get; private set; }
 
-        private TextBox    _textBox    = null!;
-        private ComboBox   _typeCombo  = null!;
-        private NumericUpDown _startSpin = null!;
-        private NumericUpDown _endSpin   = null!;
+        private TextBox  _textBox   = null!;
+        private ComboBox _typeCombo = null!;
 
-        public AddEntityDialog(List<string> entityTypes, string sourceText)
+        public AddEntityDialog(
+            List<string> entityTypes,
+            string sourceText,
+            string selectedText,
+            int selectionStart,
+            int selectionLength)
         {
             Text            = "添加实体";
-            Size            = new Size(400, 240);
+            Size            = new Size(420, 200);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition   = FormStartPosition.CenterParent;
             MaximizeBox     = false;
             MinimizeBox     = false;
-            Font            = new Font("微软雅黑", 9F);
+            Font            = NlpLabTheme.Body;
+
+            bool hasSelection = !string.IsNullOrWhiteSpace(selectedText) && selectionLength > 0;
 
             var layout = new TableLayoutPanel
             {
                 Dock        = DockStyle.Fill,
                 ColumnCount = 2,
-                Padding     = new Padding(12),
-                RowCount    = 5
+                Padding     = new Padding(14),
+                RowCount    = 4
             };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
 
-            _textBox = new TextBox { Dock = DockStyle.Fill };
+            _textBox = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                Text = hasSelection ? selectedText : "",
+                ReadOnly = hasSelection
+            };
 
             _typeCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
             foreach (var t in entityTypes) _typeCombo.Items.Add(t);
             if (_typeCombo.Items.Count > 0) _typeCombo.SelectedIndex = 0;
 
-            _startSpin = new NumericUpDown { Minimum = 0, Maximum = sourceText.Length, Dock = DockStyle.Fill };
-            _endSpin   = new NumericUpDown { Minimum = 0, Maximum = sourceText.Length, Dock = DockStyle.Fill };
-
-            var okBtn = new Button
+            var hint = new Label
             {
-                Text      = "确定",
-                DialogResult = DialogResult.OK,
-                BackColor = Color.FromArgb(24, 144, 255),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
+                Text      = hasSelection
+                    ? $"已从输入框选中文本（位置 {selectionStart}–{selectionStart + selectionLength - 1}）"
+                    : "提示：先在输入框中选中文本再点击添加，可自动填充",
+                Dock      = DockStyle.Fill,
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextTertiary,
+                TextAlign = ContentAlignment.MiddleLeft
             };
-            okBtn.FlatAppearance.BorderSize = 0;
+
+            var okBtn = NlpLabTheme.MakePrimary(new Button
+            {
+                Text         = "确定",
+                DialogResult = DialogResult.OK,
+                Width        = 80,
+                Height       = 32
+            });
             okBtn.Click += (s, e) =>
             {
                 EntityText = _textBox.Text.Trim();
                 EntityType = _typeCombo.SelectedItem?.ToString() ?? "";
-                StartIndex = (int)_startSpin.Value;
-                EndIndex   = (int)_endSpin.Value;
-                if (string.IsNullOrEmpty(EntityText)) { EntityText = sourceText.Length > 0 ? sourceText.Substring(StartIndex, Math.Max(1, EndIndex - StartIndex + 1)) : ""; }
+                if (hasSelection)
+                {
+                    StartIndex = selectionStart;
+                    EndIndex   = selectionStart + selectionLength - 1;
+                    if (string.IsNullOrEmpty(EntityText))
+                        EntityText = selectedText;
+                }
+                else
+                {
+                    int found = (sourceText ?? "").IndexOf(EntityText, StringComparison.Ordinal);
+                    StartIndex = found >= 0 ? found : 0;
+                    EndIndex   = StartIndex + Math.Max(1, EntityText.Length) - 1;
+                }
+
+                if (string.IsNullOrEmpty(EntityText) || string.IsNullOrEmpty(EntityType))
+                {
+                    MessageBox.Show("实体文本和类型不能为空", "提示");
+                    DialogResult = DialogResult.None;
+                }
             };
 
-            var cancelBtn = new Button { Text = "取消", DialogResult = DialogResult.Cancel, FlatStyle = FlatStyle.Flat };
+            var cancelBtn = NlpLabTheme.MakeGhost(new Button
+            {
+                Text         = "取消",
+                DialogResult = DialogResult.Cancel,
+                Width        = 80,
+                Height       = 32
+            });
 
             var btnPanel = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
             btnPanel.Controls.AddRange(new Control[] { cancelBtn, okBtn });
 
-            layout.Controls.Add(new Label { Text = "实体文本", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }); layout.Controls.Add(_textBox);
-            layout.Controls.Add(new Label { Text = "实体类型", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }); layout.Controls.Add(_typeCombo);
-            layout.Controls.Add(new Label { Text = "起始位置", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }); layout.Controls.Add(_startSpin);
-            layout.Controls.Add(new Label { Text = "结束位置", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill }); layout.Controls.Add(_endSpin);
-            layout.Controls.Add(new Label()); layout.Controls.Add(btnPanel);
+            layout.Controls.Add(new Label { Text = "实体文本", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill });
+            layout.Controls.Add(_textBox);
+            layout.Controls.Add(new Label { Text = "实体类型", TextAlign = ContentAlignment.MiddleRight, Dock = DockStyle.Fill });
+            layout.Controls.Add(_typeCombo);
+            layout.Controls.Add(new Label());
+            layout.Controls.Add(hint);
+            layout.Controls.Add(new Label());
+            layout.Controls.Add(btnPanel);
 
             this.Controls.Add(layout);
             this.AcceptButton = okBtn;

@@ -111,16 +111,51 @@ namespace DocExtractor.ML.EntityExtractor
         /// </summary>
         public IReadOnlyList<NamedEntity> ExtractWithConfidence(string text)
         {
-            if (string.IsNullOrWhiteSpace(text)) return Array.Empty<NamedEntity>();
+            var labelEntities = ExtractLabelEntitiesWithConfidence(text);
+            var result = new List<NamedEntity>(labelEntities.Count);
+            foreach (var item in labelEntities)
+            {
+                if (!TryMapEntityType(item.Label, out var mappedType))
+                    continue;
 
-            var ruleEntities = _ruleExtractor.Extract(text);
+                result.Add(new NamedEntity
+                {
+                    Text = item.Text,
+                    Type = mappedType,
+                    StartIndex = item.StartIndex,
+                    EndIndex = item.EndIndex,
+                    Confidence = item.Confidence
+                });
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 字符串标签实体提取（主动学习链路使用）。
+        /// 支持自定义标签，不依赖 EntityType 枚举。
+        /// </summary>
+        public IReadOnlyList<LabelEntity> ExtractLabelEntitiesWithConfidence(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return Array.Empty<LabelEntity>();
+
+            var ruleEntities = _ruleExtractor.Extract(text)
+                .Select(e => new LabelEntity
+                {
+                    Text = e.Text,
+                    Label = e.Type.ToString(),
+                    StartIndex = e.StartIndex,
+                    EndIndex = e.EndIndex,
+                    Confidence = e.Confidence
+                })
+                .ToList();
+
             if (!IsLoaded) return ruleEntities;
 
             var mlEntities = _useCharLevel
-                ? ExtractWithCharLevel(text)
-                : ExtractWithWordLevelAndConfidence(text);
+                ? ExtractLabelEntitiesWithCharLevel(text)
+                : ExtractLabelEntitiesWithWordLevelAndConfidence(text);
 
-            return MergeEntities(ruleEntities, mlEntities);
+            return MergeLabelEntities(ruleEntities, mlEntities);
         }
 
         /// <summary>
@@ -196,6 +231,28 @@ namespace DocExtractor.ML.EntityExtractor
             return DecodeBIOSequenceWithScore(text, output.PredictedLabel.ToList(), output.Score);
         }
 
+        /// <summary>NAS-BERT 整句推理（字符串标签 + 置信度）</summary>
+        private IReadOnlyList<LabelEntity> ExtractLabelEntitiesWithWordLevelAndConfidence(string text)
+        {
+            if (_wordEngineWithScore == null) return ExtractLabelEntitiesWithWordLevel(text);
+
+            var chars = text.ToCharArray();
+            string spaceSeparated = string.Join(" ", chars.Select(c => c.ToString()));
+
+            NerWordOutputWithScore output;
+            lock (_lock)
+            {
+                if (_wordEngineWithScore == null) return ExtractLabelEntitiesWithWordLevel(text);
+                var input = new NerWordInput { Sentence = spaceSeparated };
+                output = _wordEngineWithScore.Predict(input);
+            }
+
+            if (output.PredictedLabel == null || output.PredictedLabel.Length == 0)
+                return Array.Empty<LabelEntity>();
+
+            return DecodeBIOSequenceWithScoreToLabels(text, output.PredictedLabel.ToList(), output.Score);
+        }
+
         /// <summary>NAS-BERT 整句推理</summary>
         private IReadOnlyList<NamedEntity> ExtractWithWordLevel(string text)
         {
@@ -245,6 +302,55 @@ namespace DocExtractor.ML.EntityExtractor
             }
 
             return DecodeBIOSequence(text, predictions);
+        }
+
+        /// <summary>旧格式字符级逐字预测（字符串标签）</summary>
+        private IReadOnlyList<LabelEntity> ExtractLabelEntitiesWithCharLevel(string text)
+        {
+            var chars = text.ToCharArray();
+            var inputs = new List<NerInput>(chars.Length);
+
+            for (int i = 0; i < chars.Length; i++)
+            {
+                inputs.Add(new NerInput
+                {
+                    CharToken = chars[i].ToString(),
+                    Position = (float)i / chars.Length,
+                    CtxLeft2 = i >= 2 ? chars[i - 2].ToString() : "[PAD]",
+                    CtxLeft1 = i >= 1 ? chars[i - 1].ToString() : "[PAD]",
+                    CtxRight1 = i + 1 < chars.Length ? chars[i + 1].ToString() : "[PAD]",
+                    CtxRight2 = i + 2 < chars.Length ? chars[i + 2].ToString() : "[PAD]"
+                });
+            }
+
+            List<string> predictions;
+            lock (_lock)
+            {
+                predictions = new List<string>(chars.Length);
+                foreach (var inp in inputs)
+                    predictions.Add(_charEngine!.Predict(inp).PredictedLabel);
+            }
+
+            return DecodeBIOSequenceToLabels(text, predictions);
+        }
+
+        /// <summary>NAS-BERT 整句推理（字符串标签）</summary>
+        private IReadOnlyList<LabelEntity> ExtractLabelEntitiesWithWordLevel(string text)
+        {
+            var chars = text.ToCharArray();
+            string spaceSeparated = string.Join(" ", chars.Select(c => c.ToString()));
+
+            NerWordOutput output;
+            lock (_lock)
+            {
+                var input = new NerWordInput { Sentence = spaceSeparated };
+                output = _wordEngine!.Predict(input);
+            }
+
+            if (output.PredictedLabel == null || output.PredictedLabel.Length == 0)
+                return Array.Empty<LabelEntity>();
+
+            return DecodeBIOSequenceToLabels(text, output.PredictedLabel.ToList());
         }
 
         /// <summary>BIO 序列解码（带置信度分数）</summary>
@@ -302,6 +408,54 @@ namespace DocExtractor.ML.EntityExtractor
             return entities;
         }
 
+        private static IReadOnlyList<LabelEntity> DecodeBIOSequenceWithScoreToLabels(string text, List<string> tags, float[]? scores)
+        {
+            var entities = new List<LabelEntity>();
+            int i = 0;
+
+            while (i < tags.Count)
+            {
+                string tag = tags[i];
+                if (!tag.StartsWith("B-", StringComparison.Ordinal))
+                {
+                    i++;
+                    continue;
+                }
+
+                string label = tag.Substring(2);
+                int start = i;
+                int end = i;
+                while (end + 1 < tags.Count && tags[end + 1] == "I-" + label)
+                    end++;
+
+                int safeEnd = Math.Min(end, text.Length - 1);
+                float conf = 0.8f;
+                if (scores != null && scores.Length > 0)
+                {
+                    float sum = 0f;
+                    int count = 0;
+                    for (int k = start; k <= end && k < scores.Length; k++)
+                    {
+                        sum += scores[k];
+                        count++;
+                    }
+                    if (count > 0) conf = sum / count;
+                }
+
+                entities.Add(new LabelEntity
+                {
+                    Label = label,
+                    Text = text.Substring(start, safeEnd - start + 1),
+                    StartIndex = start,
+                    EndIndex = safeEnd,
+                    Confidence = conf
+                });
+                i = end + 1;
+            }
+
+            return entities;
+        }
+
         /// <summary>BIO 序列解码：将字符级标签还原为实体</summary>
         private static IReadOnlyList<NamedEntity> DecodeBIOSequence(string text, List<string> tags)
         {
@@ -345,6 +499,42 @@ namespace DocExtractor.ML.EntityExtractor
             return entities;
         }
 
+        private static IReadOnlyList<LabelEntity> DecodeBIOSequenceToLabels(string text, List<string> tags)
+        {
+            var entities = new List<LabelEntity>();
+            int i = 0;
+
+            while (i < tags.Count)
+            {
+                string tag = tags[i];
+                if (!tag.StartsWith("B-", StringComparison.Ordinal))
+                {
+                    i++;
+                    continue;
+                }
+
+                string label = tag.Substring(2);
+                int start = i;
+                int end = i;
+                while (end + 1 < tags.Count && tags[end + 1] == "I-" + label)
+                    end++;
+
+                int safeEnd = Math.Min(end, text.Length - 1);
+                entities.Add(new LabelEntity
+                {
+                    Label = label,
+                    Text = text.Substring(start, safeEnd - start + 1),
+                    StartIndex = start,
+                    EndIndex = safeEnd,
+                    Confidence = 0.8f
+                });
+
+                i = end + 1;
+            }
+
+            return entities;
+        }
+
         private static IReadOnlyList<NamedEntity> MergeEntities(
             IReadOnlyList<NamedEntity> ruleEntities,
             IReadOnlyList<NamedEntity> mlEntities)
@@ -363,11 +553,47 @@ namespace DocExtractor.ML.EntityExtractor
             return result.OrderBy(e => e.StartIndex).ToList();
         }
 
+        private static IReadOnlyList<LabelEntity> MergeLabelEntities(
+            IReadOnlyList<LabelEntity> ruleEntities,
+            IReadOnlyList<LabelEntity> mlEntities)
+        {
+            var result = new List<LabelEntity>(ruleEntities);
+            var coveredRanges = ruleEntities.Select(e => (Start: e.StartIndex, End: e.EndIndex)).ToList();
+
+            foreach (var mlEnt in mlEntities)
+            {
+                bool overlaps = coveredRanges.Any(r =>
+                    mlEnt.StartIndex <= r.End && mlEnt.EndIndex >= r.Start);
+                if (!overlaps)
+                    result.Add(mlEnt);
+            }
+
+            return result.OrderBy(e => e.StartIndex).ToList();
+        }
+
+        private static bool TryMapEntityType(string label, out EntityType entityType)
+        {
+            return Enum.TryParse(label, true, out entityType);
+        }
+
         public void Dispose()
         {
             _wordEngine?.Dispose();
             _wordEngineWithScore?.Dispose();
             _charEngine?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// 主动学习链路使用的字符串标签实体。
+    /// 与 EntityType 枚举解耦，支持自定义场景标签。
+    /// </summary>
+    public class LabelEntity
+    {
+        public string Label { get; set; } = string.Empty;
+        public string Text { get; set; } = string.Empty;
+        public int StartIndex { get; set; }
+        public int EndIndex { get; set; }
+        public float Confidence { get; set; }
     }
 }

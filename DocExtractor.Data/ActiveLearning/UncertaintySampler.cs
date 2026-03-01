@@ -40,12 +40,12 @@ namespace DocExtractor.Data.ActiveLearning
                 if (_nerModel.IsLoaded)
                 {
                     conf = _nerModel.ComputeTextConfidence(text);
-                    var entities = _nerModel.ExtractWithConfidence(text);
+                    var entities = _nerModel.ExtractLabelEntitiesWithConfidence(text);
                     predictions = entities.Select(e => new ActiveEntityAnnotation
                     {
                         StartIndex  = e.StartIndex,
                         EndIndex    = e.EndIndex,
-                        EntityType  = e.Type.ToString(),
+                        EntityType  = e.Label,
                         Text        = e.Text,
                         Confidence  = e.Confidence
                     }).ToList();

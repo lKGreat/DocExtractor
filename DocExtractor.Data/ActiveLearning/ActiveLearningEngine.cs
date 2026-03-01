@@ -28,6 +28,12 @@ namespace DocExtractor.Data.ActiveLearning
         /// <summary>每次新增多少条样本后建议训练</summary>
         public int TrainTriggerBatchSize { get; set; } = 20;
 
+        /// <summary>质量门控目标：测试集 F1 必须达到该阈值</summary>
+        public double QualityGateTargetF1 { get; set; } = 0.95;
+
+        /// <summary>质量门控增益：测试集 F1 相对基线至少提升该值</summary>
+        public double QualityGateMinDelta { get; set; } = 0.005;
+
         public ActiveLearningEngine(string dbPath, string modelsDir, NerModel nerModel)
         {
             _dbPath    = dbPath;
@@ -44,16 +50,16 @@ namespace DocExtractor.Data.ActiveLearning
             if (string.IsNullOrWhiteSpace(text))
                 return new TextPredictionResult { RawText = text, Entities = new List<ActiveEntityAnnotation>() };
 
-            var entities = _nerModel.ExtractWithConfidence(text);
+            var entities = _nerModel.ExtractLabelEntitiesWithConfidence(text);
 
             var scenarioTypes = new HashSet<string>(scenario.EntityTypes, StringComparer.OrdinalIgnoreCase);
             var filtered = entities
-                .Where(e => scenarioTypes.Count == 0 || scenarioTypes.Contains(e.Type.ToString()))
+                .Where(e => scenarioTypes.Count == 0 || scenarioTypes.Contains(e.Label))
                 .Select(e => new ActiveEntityAnnotation
                 {
                     StartIndex = e.StartIndex,
                     EndIndex   = e.EndIndex,
-                    EntityType = e.Type.ToString(),
+                    EntityType = e.Label,
                     Text       = e.Text,
                     Confidence = e.Confidence
                 })
@@ -106,7 +112,7 @@ namespace DocExtractor.Data.ActiveLearning
             }
 
             if (uncertainEntryId.HasValue)
-                repo.MarkUncertainReviewed(uncertainEntryId.Value);
+                repo.MarkUncertainReviewed(uncertainEntryId.Value, isSkipped: false);
 
             return id;
         }
@@ -123,9 +129,11 @@ namespace DocExtractor.Data.ActiveLearning
         {
             var uncertain = _sampler.SelectMostUncertain(texts, scenarioId, topN: 50);
             using var repo = new ActiveLearningRepository(_dbPath);
+            int before = repo.GetPendingUncertainCount(scenarioId);
             foreach (var entry in uncertain)
                 repo.AddUncertainEntry(entry);
-            return uncertain.Count;
+            int after = repo.GetPendingUncertainCount(scenarioId);
+            return Math.Max(0, after - before);
         }
 
         // ── 增量训练 ─────────────────────────────────────────────────────────
@@ -156,13 +164,24 @@ namespace DocExtractor.Data.ActiveLearning
                 return result;
             }
 
-            var nerAnnotations = ConvertToNerAnnotations(samples);
+            var split = BuildHoldoutSplit(samples, p.Seed, p.TestFraction);
+            var trainingSamples = split.TrainSamples.Concat(split.ValidationSamples).ToList();
+            var testSamples = split.TestSamples;
 
-            progress?.Report(("评估", "记录训练前基线质量...", 5));
-            var metricsBefore = EvaluateCurrentModel(samples);
+            if (trainingSamples.Count == 0 || testSamples.Count == 0)
+            {
+                result.Success = false;
+                result.Message = "样本切分失败（训练集或测试集为空），请增加样本后重试";
+                return result;
+            }
+
+            var nerAnnotations = ConvertToNerAnnotations(trainingSamples);
+
+            progress?.Report(("评估", $"记录训练前基线质量（测试集 {testSamples.Count} 条）...", 5));
+            var metricsBefore = EvaluateCurrentModel(testSamples);
             result.MetricsBefore = metricsBefore;
 
-            progress?.Report(("训练", "开始增量训练 NER 模型...", 10));
+            progress?.Report(("训练", $"开始增量训练 NER 模型（训练+验证集 {trainingSamples.Count} 条）...", 10));
             string tempModelPath = Path.Combine(_modelsDir, $"_tmp_nlplab_ner_{Guid.NewGuid():N}.zip");
 
             try
@@ -179,26 +198,29 @@ namespace DocExtractor.Data.ActiveLearning
                 tempModel.Load(tempModelPath);
 
                 var predictor   = MakePredictor(tempModel);
-                var metricsAfter = _evaluator.EvaluateAll(samples, predictor);
+                var metricsAfter = _evaluator.EvaluateAll(testSamples, predictor);
                 result.MetricsAfter = metricsAfter;
 
-                bool improved = metricsAfter.F1 >= metricsBefore.F1;
-                result.IsImproved = improved;
+                bool improved = metricsAfter.F1 >= (metricsBefore.F1 + QualityGateMinDelta);
+                bool reachedTarget = metricsAfter.F1 >= QualityGateTargetF1;
+                bool passedGate = improved && reachedTarget;
 
-                if (improved || metricsBefore.SampleCount == 0)
+                result.IsImproved = improved;
+                result.PassedQualityGate = passedGate;
+
+                if (passedGate)
                 {
                     string finalPath = Path.Combine(_modelsDir, "ner_model.zip");
                     if (File.Exists(finalPath)) File.Delete(finalPath);
                     File.Move(tempModelPath, finalPath);
                     _nerModel.Load(finalPath);
                     result.Success = true;
-                    result.Message = $"训练成功！F1: {metricsBefore.F1:P1} → {metricsAfter.F1:P1}";
+                    result.Message = $"训练成功并通过质量门控！F1: {metricsBefore.F1:P1} → {metricsAfter.F1:P1}";
                 }
                 else
                 {
                     result.Success    = true;
-                    result.IsImproved = false;
-                    result.Message    = $"训练完成但质量未提升（F1: {metricsAfter.F1:P1} < {metricsBefore.F1:P1}），已回滚";
+                    result.Message    = $"训练完成但未通过质量门控（目标 {QualityGateTargetF1:P0}，当前 {metricsAfter.F1:P1}），已回滚";
                 }
 
                 repo.SaveLearningSession(new NlpLearningSession
@@ -244,7 +266,7 @@ namespace DocExtractor.Data.ActiveLearning
         private NlpQualityMetrics EvaluateCurrentModel(List<NlpAnnotatedText> samples)
         {
             if (samples.Count == 0) return new NlpQualityMetrics();
-            return _evaluator.EvaluateOnAnnotations(samples, MakePredictor(_nerModel));
+            return _evaluator.EvaluateAll(samples, MakePredictor(_nerModel));
         }
 
         // ── 统计 ─────────────────────────────────────────────────────────────
@@ -267,6 +289,12 @@ namespace DocExtractor.Data.ActiveLearning
             return repo.GetPendingUncertainCount(scenarioId);
         }
 
+        public void MarkUncertainSkipped(int queueId, string reason = "manual_skip")
+        {
+            using var repo = new ActiveLearningRepository(_dbPath);
+            repo.MarkUncertainReviewed(queueId, isSkipped: true, skipReason: reason);
+        }
+
         public List<NlpLearningSession> GetLearningSessions(int scenarioId)
         {
             using var repo = new ActiveLearningRepository(_dbPath);
@@ -274,6 +302,38 @@ namespace DocExtractor.Data.ActiveLearning
         }
 
         // ── 工具方法 ─────────────────────────────────────────────────────────
+
+        private static HoldoutSplit BuildHoldoutSplit(
+            List<NlpAnnotatedText> samples,
+            int seed,
+            double testFraction)
+        {
+            var rng = new Random(seed);
+            var randomized = samples
+                .OrderBy(_ => rng.Next())
+                .ToList();
+
+            int total = randomized.Count;
+            double boundedTestFraction = testFraction < 0.1 ? 0.1 : (testFraction > 0.4 ? 0.4 : testFraction);
+            int testCount = Math.Max(1, (int)Math.Round(total * boundedTestFraction));
+            if (testCount >= total) testCount = Math.Max(1, total - 1);
+
+            int remain = total - testCount;
+            int validationCount = remain >= 10 ? Math.Max(1, (int)Math.Round(remain * 0.1)) : 0;
+            if (validationCount >= remain) validationCount = Math.Max(0, remain - 1);
+
+            var testSamples = randomized.Take(testCount).ToList();
+            var rest = randomized.Skip(testCount).ToList();
+            var validationSamples = rest.Take(validationCount).ToList();
+            var trainSamples = rest.Skip(validationCount).ToList();
+
+            return new HoldoutSplit
+            {
+                TrainSamples = trainSamples,
+                ValidationSamples = validationSamples,
+                TestSamples = testSamples
+            };
+        }
 
         private static List<NerAnnotation> ConvertToNerAnnotations(List<NlpAnnotatedText> samples)
         {
@@ -297,12 +357,12 @@ namespace DocExtractor.Data.ActiveLearning
         }
 
         private static Func<string, List<ActiveEntityAnnotation>> MakePredictor(NerModel model) =>
-            text => model.ExtractWithConfidence(text)
+            text => model.ExtractLabelEntitiesWithConfidence(text)
                 .Select(e => new ActiveEntityAnnotation
                 {
                     StartIndex = e.StartIndex,
                     EndIndex   = e.EndIndex,
-                    EntityType = e.Type.ToString(),
+                    EntityType = e.Label,
                     Text       = e.Text,
                     Confidence = e.Confidence
                 }).ToList();
@@ -317,6 +377,13 @@ namespace DocExtractor.Data.ActiveLearning
         private static void TryDelete(string path)
         {
             try { if (File.Exists(path)) File.Delete(path); } catch { }
+        }
+
+        private sealed class HoldoutSplit
+        {
+            public List<NlpAnnotatedText> TrainSamples { get; set; } = new List<NlpAnnotatedText>();
+            public List<NlpAnnotatedText> ValidationSamples { get; set; } = new List<NlpAnnotatedText>();
+            public List<NlpAnnotatedText> TestSamples { get; set; } = new List<NlpAnnotatedText>();
         }
     }
 
@@ -336,6 +403,7 @@ namespace DocExtractor.Data.ActiveLearning
         public int SampleCount { get; set; }
         public bool Success { get; set; }
         public bool IsImproved { get; set; }
+        public bool PassedQualityGate { get; set; }
         public string Message { get; set; } = string.Empty;
         public NlpQualityMetrics? MetricsBefore { get; set; }
         public NlpQualityMetrics? MetricsAfter { get; set; }

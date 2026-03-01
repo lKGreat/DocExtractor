@@ -69,14 +69,15 @@ namespace DocExtractor.UI.Controls
         {
             this.Dock    = DockStyle.Fill;
             this.Padding = new Padding(8);
-            this.Font    = new Font("微软雅黑", 9F);
+            this.Font    = NlpLabTheme.Body;
 
             var mainSplit = new SplitContainer
             {
-                Dock             = DockStyle.Fill,
-                Orientation      = Orientation.Vertical,
-                SplitterDistance = 340
+                Dock        = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                Width       = 1200
             };
+            NlpLabTheme.SetSplitterDistanceDeferred(mainSplit, 0.32, panel1Min: 250, panel2Min: 400);
 
             mainSplit.Panel1.Controls.Add(BuildLeftPanel());
             mainSplit.Panel2.Controls.Add(BuildRightPanel());
@@ -88,7 +89,6 @@ namespace DocExtractor.UI.Controls
         {
             var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 0, 4, 0) };
 
-            // 统计栏
             var statsBar = new Panel { Dock = DockStyle.Top, Height = 56, Padding = new Padding(0, 4, 0, 4) };
 
             _statsLabel = new Label
@@ -96,8 +96,8 @@ namespace DocExtractor.UI.Controls
                 Text      = "已标注 0 条 | 待审核 0 条",
                 Dock      = DockStyle.Top,
                 Height    = 24,
-                Font      = new Font("微软雅黑", 9F),
-                ForeColor = Color.FromArgb(60, 60, 60)
+                Font      = NlpLabTheme.Body,
+                ForeColor = NlpLabTheme.TextPrimary
             };
 
             _qualityLabel = new Label
@@ -105,53 +105,40 @@ namespace DocExtractor.UI.Controls
                 Text      = "当前 F1: — | Precision: — | Recall: —",
                 Dock      = DockStyle.Top,
                 Height    = 24,
-                Font      = new Font("微软雅黑", 8.5F),
-                ForeColor = Color.FromArgb(100, 100, 100)
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextTertiary
             };
 
             statsBar.Controls.Add(_qualityLabel);
             statsBar.Controls.Add(_statsLabel);
 
-            // 队列标题行
             var queueBar = new Panel { Dock = DockStyle.Top, Height = 36, Padding = new Padding(0, 4, 0, 0) };
 
             var queueTitle = new Label
             {
                 Text      = "不确定性队列（模型最需要学习的文本）",
                 Dock      = DockStyle.Left,
-                Width     = 240,
+                Width     = 260,
                 Height    = 28,
-                Font      = new Font("微软雅黑", 9F, FontStyle.Bold),
+                Font      = NlpLabTheme.SectionTitle,
+                ForeColor = NlpLabTheme.TextPrimary,
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
-            _refreshQueueBtn = new Button
+            _refreshQueueBtn = NlpLabTheme.MakeDefault(new Button
             {
-                Text      = "刷新队列",
-                Width     = 80,
-                Height    = 28,
-                FlatStyle = FlatStyle.Flat,
-                Dock      = DockStyle.Right
-            };
+                Text   = "刷新队列",
+                Width  = 80,
+                Height = 28,
+                Dock   = DockStyle.Right
+            });
             _refreshQueueBtn.Click += (s, e) => LoadQueue();
             queueBar.Controls.Add(_refreshQueueBtn);
             queueBar.Controls.Add(queueTitle);
 
-            // 队列 Grid
-            _queueGrid = new DataGridView
-            {
-                Dock                   = DockStyle.Fill,
-                AllowUserToAddRows     = false,
-                AllowUserToDeleteRows  = false,
-                RowHeadersVisible      = false,
-                SelectionMode          = DataGridViewSelectionMode.FullRowSelect,
-                MultiSelect            = false,
-                AutoSizeColumnsMode    = DataGridViewAutoSizeColumnsMode.Fill,
-                BorderStyle            = BorderStyle.None,
-                BackgroundColor        = Color.White,
-                GridColor              = Color.FromArgb(220, 220, 220),
-                Font                   = new Font("微软雅黑", 8.5F)
-            };
+            _queueGrid = new DataGridView { Dock = DockStyle.Fill };
+            NlpLabTheme.StyleGrid(_queueGrid);
+            _queueGrid.Font = NlpLabTheme.Small;
             BuildQueueColumns();
             _queueGrid.SelectionChanged += OnQueueSelectionChanged;
 
@@ -164,22 +151,21 @@ namespace DocExtractor.UI.Controls
         private void BuildQueueColumns()
         {
             _queueGrid.Columns.Clear();
-            _queueGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Text",    HeaderText = "文本摘要",    FillWeight = 60, ReadOnly = true });
-            _queueGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Conf",    HeaderText = "置信度",     FillWeight = 20, ReadOnly = true });
-            _queueGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Created", HeaderText = "时间",       FillWeight = 20, ReadOnly = true });
+            _queueGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Text",    HeaderText = "文本摘要",  FillWeight = 60, ReadOnly = true });
+            _queueGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Conf",    HeaderText = "置信度",   FillWeight = 20, ReadOnly = true });
+            _queueGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Created", HeaderText = "时间",     FillWeight = 20, ReadOnly = true });
         }
 
         private Panel BuildRightPanel()
         {
             var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4, 0, 0, 0) };
 
-            // 上半：标注区
             var annotateSection = new GroupBox
             {
                 Text   = "当前标注文本",
                 Dock   = DockStyle.Top,
                 Height = 260,
-                Font   = new Font("微软雅黑", 9F, FontStyle.Bold)
+                Font   = NlpLabTheme.SectionTitle
             };
 
             _annotateBox = new RichTextBox
@@ -187,8 +173,8 @@ namespace DocExtractor.UI.Controls
                 Dock        = DockStyle.Fill,
                 ReadOnly    = true,
                 ScrollBars  = RichTextBoxScrollBars.Vertical,
-                Font        = new Font("微软雅黑", 10F),
-                BackColor   = Color.FromArgb(250, 250, 250),
+                Font        = NlpLabTheme.TextInput,
+                BackColor   = NlpLabTheme.BgInput,
                 BorderStyle = BorderStyle.None
             };
 
@@ -200,57 +186,44 @@ namespace DocExtractor.UI.Controls
                 Padding       = new Padding(0, 4, 0, 0)
             };
 
-            _confirmAnnotateBtn = new Button
+            _confirmAnnotateBtn = NlpLabTheme.MakeSuccess(new Button
             {
-                Text      = "✓ 确认标注",
-                Width     = 100,
-                Height    = 28,
-                BackColor = Color.FromArgb(82, 196, 26),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Enabled   = false
-            };
-            _confirmAnnotateBtn.FlatAppearance.BorderSize = 0;
+                Text    = "✓ 确认标注",
+                Width   = 100,
+                Height  = 28,
+                Enabled = false
+            });
             _confirmAnnotateBtn.Click += OnConfirmAnnotation;
 
-            _skipBtn = new Button
+            _skipBtn = NlpLabTheme.MakeGhost(new Button
             {
-                Text      = "跳过",
-                Width     = 60,
-                Height    = 28,
-                FlatStyle = FlatStyle.Flat,
-                Enabled   = false
-            };
+                Text    = "跳过",
+                Width   = 60,
+                Height  = 28,
+                Enabled = false
+            });
             _skipBtn.Click += OnSkip;
 
             annotateBtnBar.Controls.AddRange(new Control[] { _confirmAnnotateBtn, _skipBtn });
             annotateSection.Controls.Add(_annotateBox);
             annotateSection.Controls.Add(annotateBtnBar);
 
-            // 编辑实体区（轻量版，选中队列项后出现）
             var editSection = new GroupBox
             {
                 Text   = "编辑实体（点击队列中的文本开始标注）",
                 Dock   = DockStyle.Top,
                 Height = 160,
-                Font   = new Font("微软雅黑", 9F, FontStyle.Bold)
+                Font   = NlpLabTheme.SectionTitle
             };
 
-            _editGrid = new DataGridView
-            {
-                Dock                   = DockStyle.Fill,
-                AllowUserToAddRows     = true,
-                AllowUserToDeleteRows  = true,
-                RowHeadersVisible      = false,
-                AutoSizeColumnsMode    = DataGridViewAutoSizeColumnsMode.Fill,
-                BorderStyle            = BorderStyle.None,
-                BackgroundColor        = Color.White,
-                Font                   = new Font("微软雅黑", 8.5F)
-            };
+            _editGrid = new DataGridView { Dock = DockStyle.Fill };
+            NlpLabTheme.StyleGrid(_editGrid);
+            _editGrid.AllowUserToAddRows    = true;
+            _editGrid.AllowUserToDeleteRows = true;
+            _editGrid.Font = NlpLabTheme.Small;
             BuildEditGridColumns();
             editSection.Controls.Add(_editGrid);
 
-            // 训练控制区
             var trainSection = BuildTrainingSection();
 
             panel.Controls.Add(trainSection);
@@ -275,14 +248,13 @@ namespace DocExtractor.UI.Controls
         {
             var section = new GroupBox
             {
-                Text   = "增量训练",
-                Dock   = DockStyle.Fill,
-                Font   = new Font("微软雅黑", 9F, FontStyle.Bold)
+                Text = "增量训练",
+                Dock = DockStyle.Fill,
+                Font = NlpLabTheme.SectionTitle
             };
 
             var content = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
 
-            // 训练参数行
             var paramBar = new FlowLayoutPanel
             {
                 Dock          = DockStyle.Top,
@@ -291,37 +263,39 @@ namespace DocExtractor.UI.Controls
                 Padding       = new Padding(0, 4, 0, 0)
             };
 
-            var presetLabel = new Label { Text = "训练预设：", Width = 70, Height = 28, TextAlign = ContentAlignment.MiddleLeft };
+            var presetLabel = new Label
+            {
+                Text      = "训练预设：",
+                Width     = 70,
+                Height    = 28,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font      = NlpLabTheme.Body
+            };
             _presetCombo = new ComboBox
             {
                 Width         = 100,
                 Height        = 28,
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Font          = new Font("微软雅黑", 8.5F)
+                Font          = NlpLabTheme.Small
             };
             _presetCombo.Items.AddRange(new object[] { "快速", "标准", "精细" });
             _presetCombo.SelectedIndex = 1;
 
-            _trainBtn = new Button
+            _trainBtn = NlpLabTheme.MakePrimary(new Button
             {
-                Text      = "开始训练",
-                Width     = 90,
-                Height    = 28,
-                BackColor = Color.FromArgb(24, 144, 255),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
-            };
-            _trainBtn.FlatAppearance.BorderSize = 0;
+                Text   = "开始训练",
+                Width  = 90,
+                Height = 28
+            });
             _trainBtn.Click += OnTrain;
 
-            _cancelTrainBtn = new Button
+            _cancelTrainBtn = NlpLabTheme.MakeGhost(new Button
             {
-                Text      = "取消",
-                Width     = 60,
-                Height    = 28,
-                FlatStyle = FlatStyle.Flat,
-                Enabled   = false
-            };
+                Text    = "取消",
+                Width   = 60,
+                Height  = 28,
+                Enabled = false
+            });
             _cancelTrainBtn.Click += (s, e) => _trainCts?.Cancel();
 
             paramBar.Controls.AddRange(new Control[] { presetLabel, _presetCombo, _trainBtn, _cancelTrainBtn });
@@ -329,7 +303,7 @@ namespace DocExtractor.UI.Controls
             _trainProgress = new ProgressBar
             {
                 Dock    = DockStyle.Top,
-                Height  = 8,
+                Height  = 6,
                 Minimum = 0,
                 Maximum = 100,
                 Value   = 0,
@@ -341,8 +315,8 @@ namespace DocExtractor.UI.Controls
                 Dock      = DockStyle.Top,
                 Height    = 22,
                 Text      = "就绪",
-                Font      = new Font("微软雅黑", 8.5F),
-                ForeColor = Color.FromArgb(100, 100, 100)
+                Font      = NlpLabTheme.Small,
+                ForeColor = NlpLabTheme.TextTertiary
             };
 
             _trainLog = new RichTextBox
@@ -350,9 +324,9 @@ namespace DocExtractor.UI.Controls
                 Dock        = DockStyle.Fill,
                 ReadOnly    = true,
                 ScrollBars  = RichTextBoxScrollBars.Vertical,
-                Font        = new Font("Consolas", 8.5F),
-                BackColor   = Color.FromArgb(20, 20, 20),
-                ForeColor   = Color.LightGreen,
+                Font        = NlpLabTheme.Mono,
+                BackColor   = Color.FromArgb(248, 249, 250),
+                ForeColor   = NlpLabTheme.TextPrimary,
                 BorderStyle = BorderStyle.None
             };
 
@@ -376,7 +350,8 @@ namespace DocExtractor.UI.Controls
                 string preview = entry.RawText.Length > 60
                     ? entry.RawText.Substring(0, 57) + "..."
                     : entry.RawText;
-                _queueGrid.Rows.Add(preview, $"{entry.MinConfidence:P0}", entry.CreatedAt.Length > 16 ? entry.CreatedAt.Substring(5, 11) : entry.CreatedAt);
+                _queueGrid.Rows.Add(preview, $"{entry.MinConfidence:P0}",
+                    entry.CreatedAt.Length > 16 ? entry.CreatedAt.Substring(5, 11) : entry.CreatedAt);
             }
 
             RefreshStats();
@@ -392,18 +367,20 @@ namespace DocExtractor.UI.Controls
             if (!_trainBtn.Enabled)
                 _trainStatusLabel.Text = $"还需标注 {_engine.MinSamplesForTraining - verified} 条才能训练";
 
-            // 异步评估质量
             System.Threading.Tasks.Task.Run(() =>
             {
                 try
                 {
                     var metrics = _engine.EvaluateCurrentModel(_scenario.Id);
-                    this.Invoke((Action)(() =>
+                    if (this.IsHandleCreated)
                     {
-                        _qualityLabel.Text = $"当前 F1: {metrics.F1:P1} | Precision: {metrics.Precision:P1} | Recall: {metrics.Recall:P1} | 样本 {metrics.SampleCount}";
-                        _qualityLabel.ForeColor = metrics.F1 >= 0.95 ? Color.DarkGreen
-                            : metrics.F1 >= 0.85 ? Color.DarkOrange : Color.DarkRed;
-                    }));
+                        this.Invoke((Action)(() =>
+                        {
+                            _qualityLabel.Text = $"当前 F1: {metrics.F1:P1} | Precision: {metrics.Precision:P1} | Recall: {metrics.Recall:P1} | 样本 {metrics.SampleCount}";
+                            _qualityLabel.ForeColor = metrics.F1 >= 0.95 ? Color.FromArgb(82, 196, 26)
+                                : metrics.F1 >= 0.85 ? Color.DarkOrange : NlpLabTheme.Danger;
+                        }));
+                    }
                 }
                 catch { }
             });
@@ -418,7 +395,6 @@ namespace DocExtractor.UI.Controls
             _currentEntry = _queue[idx];
             _annotateBox.Text = _currentEntry.RawText;
 
-            // 用模型当前预测填充编辑网格
             _currentAnnotations = DeserializeAnnotations(_currentEntry.PredictionsJson);
             RefreshEditGrid();
 
@@ -437,7 +413,6 @@ namespace DocExtractor.UI.Controls
         {
             if (_currentEntry == null) return;
 
-            // 从编辑网格读出用户修正后的实体
             var confirmed = new List<ActiveEntityAnnotation>();
             foreach (DataGridViewRow row in _editGrid.Rows)
             {
@@ -467,7 +442,6 @@ namespace DocExtractor.UI.Controls
 
             AppendLog($"✓ 已标注：{_currentEntry.RawText.Substring(0, Math.Min(40, _currentEntry.RawText.Length))}...");
 
-            // 从队列中移除
             int rowIdx = _queueGrid.CurrentRow?.Index ?? -1;
             if (rowIdx >= 0 && rowIdx < _queue.Count)
             {
@@ -487,7 +461,16 @@ namespace DocExtractor.UI.Controls
         private void OnSkip(object sender, EventArgs e)
         {
             if (_currentEntry == null) return;
+
+            var result = MessageBox.Show(
+                $"确定跳过该文本？\n\n{_currentEntry.RawText.Substring(0, Math.Min(80, _currentEntry.RawText.Length))}...",
+                "确认跳过",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (result != DialogResult.Yes) return;
+
             AppendLog($"→ 跳过：{_currentEntry.RawText.Substring(0, Math.Min(30, _currentEntry.RawText.Length))}...");
+            _engine.MarkUncertainSkipped(_currentEntry.Id, "user_skip");
 
             int rowIdx = _queueGrid.CurrentRow?.Index ?? -1;
             if (rowIdx >= 0 && rowIdx < _queue.Count)
@@ -549,11 +532,15 @@ namespace DocExtractor.UI.Controls
                         AppendLog($"  Precision: {result.MetricsBefore.Precision:P2} → {result.MetricsAfter.Precision:P2}");
                         AppendLog($"  Recall:    {result.MetricsBefore.Recall:P2} → {result.MetricsAfter.Recall:P2}");
 
-                        _trainStatusLabel.Text     = result.IsImproved ? "训练成功，模型已更新！" : "训练完成（质量未提升，已回滚）";
-                        _trainStatusLabel.ForeColor = result.IsImproved ? Color.DarkGreen : Color.DarkOrange;
+                        _trainStatusLabel.Text      = result.PassedQualityGate
+                            ? "训练成功并通过质量门控，模型已更新"
+                            : "训练完成但未通过质量门控，已回滚";
+                        _trainStatusLabel.ForeColor = result.PassedQualityGate
+                            ? Color.FromArgb(82, 196, 26)
+                            : Color.DarkOrange;
 
                         if (result.MetricsAfter.F1 >= 0.95)
-                            AppendLog("🎉 F1 >= 95%，模型已达到目标质量！");
+                            AppendLog("F1 >= 95%，模型已达到目标质量！");
                     }
 
                     AppendLog($"耗时: {result.DurationSeconds:F1}s");
@@ -576,8 +563,8 @@ namespace DocExtractor.UI.Controls
                 this.Invoke((Action)(() =>
                 {
                     AppendLog($"训练异常: {ex.Message}");
-                    _trainStatusLabel.Text = "训练失败";
-                    _trainStatusLabel.ForeColor = Color.Red;
+                    _trainStatusLabel.Text      = "训练失败";
+                    _trainStatusLabel.ForeColor = NlpLabTheme.Danger;
                 }));
             }
             finally
