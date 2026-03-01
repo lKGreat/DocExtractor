@@ -249,7 +249,10 @@ namespace DocExtractor.Data.Export
         {
             if (field.BitOffset >= 0 && field.BitLength > 0)
                 return "WD" + ExtractByteNumber(field.ByteSequence);
-            return field.ByteSequence;
+            string seq = field.ByteSequence;
+            if (!string.IsNullOrEmpty(seq) && seq.Contains("-"))
+                return "W" + ExtractByteNumber(seq);
+            return seq;
         }
 
         private string FormatBitOffset(ProtocolTelemetryField field)

@@ -118,14 +118,7 @@ namespace DocExtractor.Core.Protocol
         private static void MergeIntoPrevious(List<ProtocolTelemetryField> fields, ProtocolTelemetryField cont)
         {
             var prev = fields[fields.Count - 1];
-            string contNum = ExtractByteNum(cont.ByteSequence);
-            if (!string.IsNullOrEmpty(contNum))
-            {
-                string prevPrefix = prev.ByteSequence.StartsWith("W") ? "W" : "";
-                if (!string.IsNullOrEmpty(prevPrefix))
-                    prev.ByteSequence = prevPrefix + ExtractByteNum(prev.ByteSequence)
-                                        + "-" + prevPrefix + contNum;
-            }
+            prev.ByteLength += Math.Max(cont.ByteLength, 1);
             if (!string.IsNullOrEmpty(cont.Remarks) && string.IsNullOrEmpty(prev.Remarks))
                 prev.Remarks = cont.Remarks;
             if (!string.IsNullOrEmpty(cont.Unit) && string.IsNullOrEmpty(prev.Unit))
