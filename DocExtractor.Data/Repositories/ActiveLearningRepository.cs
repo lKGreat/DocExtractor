@@ -417,15 +417,26 @@ CREATE TABLE IF NOT EXISTS NlpUncertainQueue (
 
         private void TryAddColumn(string tableName, string columnName, string sqlType)
         {
-            try
+            if (ColumnExists(tableName, columnName))
+                return;
+
+            using var cmd = new SQLiteCommand(
+                $"ALTER TABLE \"{tableName}\" ADD COLUMN \"{columnName}\" {sqlType}",
+                _conn);
+            cmd.ExecuteNonQuery();
+        }
+
+        private bool ColumnExists(string tableName, string columnName)
+        {
+            using var cmd = new SQLiteCommand($"PRAGMA table_info(\"{tableName}\")", _conn);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
             {
-                using var cmd = new SQLiteCommand($"ALTER TABLE {tableName} ADD COLUMN {columnName} {sqlType}", _conn);
-                cmd.ExecuteNonQuery();
+                string name = reader["name"]?.ToString() ?? string.Empty;
+                if (string.Equals(name, columnName, StringComparison.OrdinalIgnoreCase))
+                    return true;
             }
-            catch
-            {
-                // 已存在则忽略
-            }
+            return false;
         }
 
         public void Dispose() => _conn?.Dispose();
